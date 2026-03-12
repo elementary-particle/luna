@@ -1,0 +1,35 @@
+{
+  "dependencies": [
+    "fmt",
+    {
+      "name": "dbus",
+      "default-features": false,
+      "platform": "linux"
+    },
+    {
+      "name": "sdl3",
+      "features": [
+        "vulkan"
+      ]
+    },
+    {
+      "name": "sdl3-image",
+      "features": [
+        "png",
+        "jpeg",
+        "webp",
+        "jxl"
+      ]
+    },
+    "sdl3-ttf",
+    {
+      "name": "sdl3-mixer",
+      "features": [
+        "wave",
+        "vorbis",
+        "opus",
+        "mp3"
+      ]
+    }
+  ]
+}

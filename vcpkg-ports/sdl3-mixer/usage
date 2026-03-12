@@ -1,0 +1,8 @@
+sdl3-mixer provides CMake targets:
+
+  find_package(SDL3_mixer CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE SDL3_mixer::SDL3_mixer)
+
+sdl3-mixer provides pkg-config modules:
+
+  sdl3-mixer

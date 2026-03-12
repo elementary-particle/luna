@@ -1,0 +1,55 @@
+diff --git a/cmake/Findlibjxl.cmake b/cmake/Findlibjxl.cmake
+--- a/cmake/Findlibjxl.cmake
++++ b/cmake/Findlibjxl.cmake
+@@ -1,24 +1,49 @@
+ include(FindPackageHandleStandardArgs)
+ 
++include(CMakeFindDependencyMacro)
++
++find_dependency(hwy CONFIG)
++find_dependency(unofficial-brotli CONFIG)
++find_dependency(lcms2 CONFIG)
++
+ find_library(libjxl_LIBRARY
+     NAMES jxl
+ )
+ 
++find_library(libjxl_cms_LIBRARY
++    NAMES jxl_cms
++)
++
+ find_path(libjxl_INCLUDE_PATH
+     NAMES jxl/decode.h
+ )
+ 
+ set(libjxl_COMPILE_OPTIONS "" CACHE STRING "Extra compile options of libjxl")
+ 
+-set(libjxl_LINK_LIBRARIES "" CACHE STRING "Extra link libraries of libjxl")
++set(libjxl_LINK_LIBRARIES
++    libjxl::libjxl_cms
++    hwy::hwy
++    unofficial::brotli::brotlienc
++    unofficial::brotli::brotlidec
++)
+ 
+ set(libjxl_LINK_FLAGS "" CACHE STRING "Extra link flags of libjxl")
+ 
+ find_package_handle_standard_args(libjxl
+-    REQUIRED_VARS libjxl_LIBRARY libjxl_INCLUDE_PATH
++    REQUIRED_VARS libjxl_LIBRARY libjxl_cms_LIBRARY libjxl_INCLUDE_PATH
+ )
+ 
+ if (libjxl_FOUND)
++    if (NOT TARGET libjxl::libjxl_cms)
++        add_library(libjxl::libjxl_cms UNKNOWN IMPORTED)
++        set_target_properties(libjxl::libjxl_cms PROPERTIES
++            IMPORTED_LOCATION "${libjxl_cms_LIBRARY}"
++            INTERFACE_INCLUDE_DIRECTORIES "${libjxl_INCLUDE_PATH}"
++            INTERFACE_LINK_LIBRARIES "hwy::hwy;lcms2::lcms2"
++            INTERFACE_LINK_FLAGS "${libjxl_LINK_FLAGS}"
++        )
++    endif()
++
+     if (NOT TARGET libjxl::libjxl)
+         add_library(libjxl::libjxl UNKNOWN IMPORTED)
+         set_target_properties(libjxl::libjxl PROPERTIES
