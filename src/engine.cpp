@@ -1,11 +1,6 @@
 #include "engine.h"
 
-#include <SDL3/SDL_render.h>
-#include <SDL3_image/SDL_image.h>
-#include <SDL3_ttf/SDL_ttf.h>
-
 #include <chrono>
-#include <cstring>
 #include <memory>
 #include <thread>
 #include <utility>
@@ -13,15 +8,13 @@
 #include <fmt/core.h>
 
 #include "factory.h"
+#include "log.h"
 #include "renderer.h"
 
 namespace luna {
 
 static constexpr const char *LIBRARY_REGKEY = "luna";
-static constexpr const char *ENGINE_PTR_REGKEY = "luna.engine_ptr";
 static constexpr const char *CO_TASK_MAP_REGKEY = "luna.co_task_map";
-static constexpr const char *LUA_EVENT_MT = "luna.Event";
-static constexpr const char *LUA_PROMISE_MT = "luna.Promise";
 
 Engine::PromiseState::~PromiseState() {
   if (!owner) {
@@ -36,23 +29,30 @@ Engine::PromiseState::~PromiseState() {
 Engine::Engine() = default;
 
 bool Engine::Init() {
+  log::Info("engine", "initializing");
   factory_.Start();
+  log::Debug("engine", "worker factory started");
 
   if (!renderer_.Init()) {
+    log::Error("engine", "renderer initialization failed");
     return false;
   }
   if (!mixer_.Init()) {
+    log::Error("engine", "mixer initialization failed");
     return false;
   }
 
   if (!InitLua()) {
+    log::Error("engine", "lua initialization failed");
     return false;
   }
 
+  log::Info("engine", "initialized successfully");
   return true;
 }
 
 Engine::~Engine() {
+  factory_.Shutdown();
   pending_promises_.clear();
   timers_.clear();
 
@@ -69,6 +69,10 @@ Engine::~Engine() {
 
 bool Engine::InitLua() {
   L_ = luaL_newstate();
+  if (!L_) {
+    log::Error("engine", "luaL_newstate returned null");
+    return false;
+  }
   luaL_openlibs(L_);
 
   RegisterLuaTypes(L_);
@@ -85,84 +89,106 @@ bool Engine::InitLua() {
   return true;
 }
 
-Engine *Engine::GetEngine(lua_State *L) {
-  lua_getfield(L, LUA_REGISTRYINDEX, ENGINE_PTR_REGKEY);
-  auto *e = static_cast<Engine *>(lua_touserdata(L, -1));
-  lua_pop(L, 1);
-  return e;
-}
-
 void Engine::RegisterBindings(lua_State *L) {
-  lua_pushlightuserdata(L_, this);
-  lua_setfield(L_, LUA_REGISTRYINDEX, ENGINE_PTR_REGKEY);
-
   lua_newtable(L);
 
-  lua_pushcfunction(L, &L_Start);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_Start, 1);
   lua_setfield(L, -2, "start");
 
   lua_pushcfunction(L, &L_NextFrame);
   lua_setfield(L, -2, "next_frame");
 
-  lua_pushcfunction(L, &L_Event);
-  lua_setfield(L, -2, "event");
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_MakeEvent, 1);
+  lua_setfield(L, -2, "make_event");
 
   lua_pushcfunction(L, &L_Wait);
   lua_setfield(L, -2, "wait");
 
-  lua_pushcfunction(L, &L_Now);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_Now, 1);
   lua_setfield(L, -2, "now");
 
-  lua_pushcfunction(L, &L_After);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_After, 1);
   lua_setfield(L, -2, "after");
 
-  lua_pushcfunction(L, &L_SetFrameTime);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_SetFrameTime, 1);
   lua_setfield(L, -2, "set_frame_time");
 
-  lua_pushcfunction(L, &L_StartAsyncJob<Renderer::LoadImageJob>);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_SetWindowSize, 1);
+  lua_setfield(L, -2, "set_window_size");
+
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(
+      L,
+      [](lua_State *L) {
+        Engine *e =
+            static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
+        return L_StartAsyncJob(L, e, e->renderer_.MakeLoadImageJob());
+      },
+      1);
   lua_setfield(L, -2, "load_image");
 
-  lua_pushcfunction(L, &L_StartAsyncJob<Renderer::LoadFontJob>);
-  lua_setfield(L, -2, "load_font");
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(
+      L,
+      [](lua_State *L) {
+        Engine *e =
+            static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
+        return L_StartAsyncJob(L, e, e->renderer_.MakeLoadTypefaceJob());
+      },
+      1);
+  lua_setfield(L, -2, "load_fontface");
 
-  lua_pushcfunction(L, &L_StartAsyncJob<Mixer::LoadAudioJob>);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(
+      L,
+      [](lua_State *L) {
+        Engine *e =
+            static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
+        return L_StartAsyncJob(L, e, e->mixer_.MakeLoadAudioJob());
+      },
+      1);
   lua_setfield(L, -2, "load_audio");
 
   renderer_.RegisterBindings(L);
   mixer_.RegisterBindings(L);
-  vfs_.RegisterBindings(L_);
+  vfs_.RegisterBindings(L);
 
   lua_setfield(L, LUA_REGISTRYINDEX, LIBRARY_REGKEY);
 }
 
 void Engine::RegisterLuaTypes(lua_State *L) {
-  if (luaL_newmetatable(L, LUA_EVENT_MT)) {
-    lua_pushcfunction(L, &Engine::L_EventGc);
-    lua_setfield(L, -2, "__gc");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, &Engine::L_EventSignal);
+  if (lua::NewType<LEvent>(L)) {
+    lua_pushlightuserdata(L, this);
+    lua_pushcclosure(L, &Engine::L_EventSignal, 1);
     lua_setfield(L, -2, "signal");
-    lua_setfield(L, -2, "__index");
   }
   lua_pop(L, 1);
-
-  if (luaL_newmetatable(L, LUA_PROMISE_MT)) {
-    lua_pushcfunction(L, &Engine::L_PromiseGc);
-    lua_setfield(L, -2, "__gc");
-
-    lua_pushcfunction(L, &Engine::L_PromiseIndex);
-    lua_setfield(L, -2, "__index");
+  if (lua::NewType<LPromise>(L)) {
+    lua_pushcfunction(L, &Engine::L_PromisePoll);
+    lua_setfield(L, -2, "poll");
+    lua_pushcfunction(L, &Engine::L_PromiseTake);
+    lua_setfield(L, -2, "take");
+    lua_pushcfunction(L, &Engine::L_PromiseEvent);
+    lua_setfield(L, -2, "event");
   }
   lua_pop(L, 1);
 }
 
 bool Engine::CallLuaMain(const std::string &entry_path) {
+  log::Info("engine", "loading Lua entry '{}'", entry_path);
   if (luaL_dofile(L_, entry_path.c_str()) != 0) {
-    SDL_Log("Lua error: %s", lua_tostring(L_, -1));
+    log::Error("engine", "Lua error while loading '{}': {}", entry_path,
+               lua_tostring(L_, -1));
     lua_pop(L_, 1);
     return false;
   }
+  log::Info("engine", "Lua entry '{}' loaded successfully", entry_path);
   return true;
 }
 
@@ -170,18 +196,35 @@ void Engine::Run(const std::string &entry_path) {
   if (!CallLuaMain(entry_path))
     return;
 
+  log::Info("engine", "entering main loop");
   auto last = std::chrono::steady_clock::now();
 
   while (alive_task_count_ > 0) {
-    renderer_.PumpSdlEvents();
+    if (!renderer_.BeginFrame(L_)) {
+      log::Error("engine", "renderer failed: {}",
+                 renderer_.GetFatalError().empty()
+                     ? "unknown renderer error"
+                     : renderer_.GetFatalError());
+      renderer_.Fini();
+      alive_task_count_ = 0;
+      break;
+    }
     DrainPromiseCompletions();
-
     SignalExpiredTimers();
     Tick();
+    if (!renderer_.EndFrame()) {
+      log::Error("engine", "renderer failed: {}",
+                 renderer_.GetFatalError().empty()
+                     ? "unknown renderer error"
+                     : renderer_.GetFatalError());
+      renderer_.Fini();
+      alive_task_count_ = 0;
+      break;
+    }
 
-    auto script_time = std::chrono::steady_clock::now() - last;
-    if (script_time < frame_time_) {
-      std::this_thread::sleep_for(frame_time_ - script_time);
+    auto cpu_time = std::chrono::steady_clock::now() - last;
+    if (cpu_time < frame_time_) {
+      std::this_thread::sleep_for(frame_time_ - cpu_time);
     }
 
     auto now = std::chrono::steady_clock::now();
@@ -189,6 +232,8 @@ void Engine::Run(const std::string &entry_path) {
     AdvanceTime(elapsed.count());
     last = now;
   }
+
+  log::Info("engine", "main loop exited");
 }
 
 void Engine::DrainPromiseCompletions() {
@@ -204,9 +249,12 @@ void Engine::DrainPromiseCompletions() {
     if (job->Rejected()) {
       promise->settlement = PromiseState::Settlement::REJECTED;
       promise->error = job->GetError();
+      log::Warn("engine", "async job {} rejected: {}", promise_id,
+                promise->error);
     } else {
       promise->settlement = PromiseState::Settlement::FULFILLED;
       promise->completed_job = std::move(job);
+      log::Debug("engine", "async job {} completed", promise_id);
     }
 
     SignalEvent(promise->event);
@@ -248,7 +296,7 @@ void Engine::Tick() {
       const char *msg = lua_tostring(t->co, -1);
       luaL_traceback(t->co, t->co, msg ? msg : "(unknown)", 1);
       const char *trace = lua_tostring(t->co, -1);
-      SDL_Log("Coroutine error:\n%s", trace ? trace : "(unknown)");
+      log::Error("engine", "coroutine error:\n{}", trace ? trace : "(unknown)");
       lua_pop(t->co, 2);
       RemoveTask(t);
       alive_task_count_ = 0;
@@ -400,34 +448,8 @@ void Engine::SignalEvent(const std::shared_ptr<EventState> &event) {
   }
 }
 
-int Engine::PushEventObject(lua_State *L,
-                            const std::shared_ptr<EventState> &event) {
-  auto *ud = static_cast<LuaEvent *>(lua_newuserdata(L, sizeof(LuaEvent)));
-  new (ud) LuaEvent{event};
-  luaL_getmetatable(L, LUA_EVENT_MT);
-  lua_setmetatable(L, -2);
-  return 1;
-}
-
-int Engine::PushPromiseObject(lua_State *L,
-                              const std::shared_ptr<PromiseState> &promise) {
-  auto *ud = static_cast<LuaPromise *>(lua_newuserdata(L, sizeof(LuaPromise)));
-  new (ud) LuaPromise{promise};
-  luaL_getmetatable(L, LUA_PROMISE_MT);
-  lua_setmetatable(L, -2);
-  return 1;
-}
-
-Engine::LuaEvent *Engine::CheckEvent(lua_State *L, int idx) {
-  return static_cast<LuaEvent *>(luaL_checkudata(L, idx, LUA_EVENT_MT));
-}
-
-Engine::LuaPromise *Engine::CheckPromise(lua_State *L, int idx) {
-  return static_cast<LuaPromise *>(luaL_checkudata(L, idx, LUA_PROMISE_MT));
-}
-
 int Engine::L_Start(lua_State *L) {
-  Engine *e = GetEngine(L);
+  Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
   luaL_checktype(L, 1, LUA_TFUNCTION);
 
   lua_State *co = lua_newthread(L);
@@ -456,15 +478,16 @@ int Engine::L_Start(lua_State *L) {
 int Engine::L_NextFrame(lua_State *L) {
   Task *t = GetCurrentTask(L);
   if (!t) {
-    return luaL_error(L, "Yield can only be called from coroutine");
+    return luaL_error(L, "yield can only be called from coroutine");
   }
   t->wait = {WaitKind::NEXT_FRAME};
   return lua_yield(L, 0);
 }
 
-int Engine::L_Event(lua_State *L) {
-  Engine *e = GetEngine(L);
-  return PushEventObject(L, e->CreateEvent());
+int Engine::L_MakeEvent(lua_State *L) {
+  Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
+  lua::New<LEvent>(L, e->CreateEvent());
+  return 1;
 }
 
 int Engine::L_Wait(lua_State *L) {
@@ -475,7 +498,7 @@ int Engine::L_Wait(lua_State *L) {
 
   Task *t = GetCurrentTask(L);
   if (!t) {
-    return luaL_error(L, "Yield can only be called from coroutine");
+    return luaL_error(L, "yield can only be called from coroutine");
   }
   if (t->wait.links_head) {
     return luaL_error(L, "internal error: task wait event list not cleared");
@@ -484,7 +507,7 @@ int Engine::L_Wait(lua_State *L) {
   t->wait = {WaitKind::EVENTS};
 
   for (int i = 1; i <= arg_count; ++i) {
-    LuaEvent *event_ud = CheckEvent(L, i);
+    LEvent *event_ud = lua::Check<LEvent>(L, i);
     EventState *event = event_ud->state.get();
 
     LinkEvent(t, event, i);
@@ -494,13 +517,13 @@ int Engine::L_Wait(lua_State *L) {
 }
 
 int Engine::L_Now(lua_State *L) {
-  Engine *e = GetEngine(L);
+  Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
   lua_pushnumber(L, e->now_seconds_);
   return 1;
 }
 
 int Engine::L_After(lua_State *L) {
-  Engine *e = GetEngine(L);
+  Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
   const double seconds = luaL_checknumber(L, 1);
   if (seconds < 0.0) {
     return luaL_error(L, "after: seconds must be >= 0");
@@ -511,8 +534,28 @@ int Engine::L_After(lua_State *L) {
   e->timers_.push_back(TimerEntry{deadline, event});
 
   lua_pushnumber(L, deadline);
-  PushEventObject(L, event);
+  lua::New<LEvent>(L, event);
   return 2;
+}
+
+int Engine::L_SetWindowSize(lua_State *L) {
+  Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
+  const int width = static_cast<int>(luaL_checkinteger(L, 1));
+  const int height = static_cast<int>(luaL_checkinteger(L, 2));
+
+  if (width <= 0 || height <= 0) {
+    return luaL_error(L, "set_window_size: width and height must be positive");
+  }
+  if (e->alive_task_count_ > 0) {
+    return luaL_error(
+        L,
+        "set_window_size: must be called before starting any coroutines");
+  }
+  if (!e->renderer_.SetWindowSize(width, height)) {
+    return luaL_error(L, "set_window_size: failed to resize window: %s",
+                      SDL_GetError());
+  }
+  return 0;
 }
 
 int Engine::ResumeTask(Task *t) {
@@ -532,7 +575,7 @@ int Engine::ResumeTask(Task *t) {
 }
 
 int Engine::L_SetFrameTime(lua_State *L) {
-  Engine *e = GetEngine(L);
+  Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
   double frame_time = luaL_checknumber(L, 1);
   if (frame_time < 0.0) {
     return luaL_error(L, "set_frame_time: frame time must be >= 0");
@@ -545,20 +588,14 @@ int Engine::L_SetFrameTime(lua_State *L) {
 }
 
 int Engine::L_EventSignal(lua_State *L) {
-  Engine *e = GetEngine(L);
-  LuaEvent *event = CheckEvent(L, 1);
-  e->SignalEvent(event->state);
-  return 0;
-}
-
-int Engine::L_EventGc(lua_State *L) {
-  auto *event = static_cast<LuaEvent *>(luaL_checkudata(L, 1, LUA_EVENT_MT));
-  event->~LuaEvent();
+  Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
+  LEvent *event_ud = lua::Check<LEvent>(L, 1);
+  e->SignalEvent(event_ud->state);
   return 0;
 }
 
 int Engine::L_PromisePoll(lua_State *L) {
-  LuaPromise *promise_ud = CheckPromise(L, 1);
+  LPromise *promise_ud = lua::Check<LPromise>(L, 1);
   std::shared_ptr<PromiseState> &promise = promise_ud->state;
 
   if (!promise || promise->settlement == PromiseState::Settlement::PENDING) {
@@ -577,7 +614,7 @@ int Engine::L_PromisePoll(lua_State *L) {
 }
 
 int Engine::L_PromiseTake(lua_State *L) {
-  LuaPromise *promise_ud = CheckPromise(L, 1);
+  LPromise *promise_ud = lua::Check<LPromise>(L, 1);
   std::shared_ptr<PromiseState> &promise = promise_ud->state;
 
   if (promise->settlement == PromiseState::Settlement::PENDING) {
@@ -594,33 +631,11 @@ int Engine::L_PromiseTake(lua_State *L) {
   return produced;
 }
 
-int Engine::L_PromiseIndex(lua_State *L) {
-  LuaPromise *promise = CheckPromise(L, 1);
-  const char *key = luaL_checkstring(L, 2);
-
-  if (std::strcmp(key, "poll") == 0) {
-    lua_pushcfunction(L, &Engine::L_PromisePoll);
-    return 1;
-  }
-
-  if (std::strcmp(key, "take") == 0) {
-    lua_pushcfunction(L, &Engine::L_PromiseTake);
-    return 1;
-  }
-
-  if (std::strcmp(key, "event") == 0) {
-    return PushEventObject(L, promise->state ? promise->state->event : nullptr);
-  }
-
-  lua_pushnil(L);
+int Engine::L_PromiseEvent(lua_State *L) {
+  LPromise *promise_ud = lua::Check<LPromise>(L, 1);
+  std::shared_ptr<PromiseState> &promise = promise_ud->state;
+  lua::New<LEvent>(L, promise->event);
   return 1;
-}
-
-int Engine::L_PromiseGc(lua_State *L) {
-  auto *promise =
-      static_cast<LuaPromise *>(luaL_checkudata(L, 1, LUA_PROMISE_MT));
-  promise->~LuaPromise();
-  return 0;
 }
 
 } // namespace luna

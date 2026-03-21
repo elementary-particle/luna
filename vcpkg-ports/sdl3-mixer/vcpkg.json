@@ -1,74 +1,80 @@
 {
-    "name": "sdl3-mixer",
-    "version": "3.1.2",
-    "description": "SDL_mixer is an audio management library. It provides decoding of many popular audio file formats, mixing, various DSP processing effects and positional audio.",
-    "homepage": "https://github.com/libsdl-org/SDL_mixer",
-    "license": "Zlib",
-    "dependencies": [
-        {
-            "name": "sdl3",
-            "default-features": false
-        },
-        {
-            "name": "vcpkg-cmake",
-            "host": true
-        },
-        {
-            "name": "vcpkg-cmake-config",
-            "host": true
-        }
-    ],
-    "features": {
-        "aiff": {
-            "description": "Support for AIFF audio"
-        },
-        "wave": {
-            "description": "Support for WAVE audio"
-        },
-        "voc": {
-            "description": "Support for VOC audio"
-        },
-        "au": {
-            "description": "Support for AU audio"
-        },
-        "flac": {
-            "description": "Support for FLAC audio",
-            "dependencies": [
-                "libflac"
-            ]
-        },
-        "mod": {
-            "description": "Support for MOD audio",
-            "dependencies": [
-                "libxmp"
-            ]
-        },
-        "mp3": {
-            "description": "Support for MP3 audio",
-            "dependencies": [
-                "mpg123"
-            ]
-        },
-        "midi": {
-            "description": "Support for MIDI audio"
-        },
-        "opus": {
-            "description": "Support for OPUS audio",
-            "dependencies": [
-                "opusfile"
-            ]
-        },
-        "vorbis": {
-            "description": "Support for Ogg Vorbis audio",
-            "dependencies": [
-                "libvorbis"
-            ]
-        },
-        "wavpack": {
-            "description": "Support for WavPack audio",
-            "dependencies": [
-                "wavpack"
-            ]
-        }
+  "name": "sdl3-mixer",
+  "version": "3.2.0",
+  "description": "SDL_mixer is an audio management library. It provides decoding of many popular audio file formats, mixing, various DSP processing effects and positional audio.",
+  "homepage": "https://github.com/libsdl-org/SDL_mixer",
+  "license": "Zlib",
+  "dependencies": [
+    {
+      "name": "sdl3",
+      "default-features": false
+    },
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
     }
+  ],
+  "features": {
+    "aiff": {
+      "description": "Support for AIFF audio"
+    },
+    "wave": {
+      "description": "Support for WAVE audio"
+    },
+    "voc": {
+      "description": "Support for VOC audio"
+    },
+    "au": {
+      "description": "Support for AU audio"
+    },
+    "flac": {
+      "description": "Support for FLAC audio",
+      "dependencies": [
+        {
+          "name": "libflac",
+          "default-features": false
+        }
+      ]
+    },
+    "mod": {
+      "description": "Support for MOD audio",
+      "dependencies": [
+        {
+          "name": "libxmp",
+          "default-features": false
+        }
+      ]
+    },
+    "mp3": {
+      "description": "Support for MP3 audio",
+      "dependencies": [
+        "mpg123"
+      ]
+    },
+    "midi": {
+      "description": "Support for MIDI audio"
+    },
+    "opus": {
+      "description": "Support for OPUS audio",
+      "dependencies": [
+        "opusfile"
+      ]
+    },
+    "vorbis": {
+      "description": "Support for Ogg Vorbis audio",
+      "dependencies": [
+        "libvorbis"
+      ]
+    },
+    "wavpack": {
+      "description": "Support for WavPack audio",
+      "dependencies": [
+        "wavpack"
+      ]
+    }
+  }
 }

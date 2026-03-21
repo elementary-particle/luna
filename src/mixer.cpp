@@ -2,6 +2,8 @@
 
 #include <fmt/format.h>
 
+#include "log.h"
+
 namespace luna {
 
 static constexpr const char *MIXER_PTR_KEY = "luna.mixer_ptr";
@@ -51,18 +53,20 @@ void Mixer::ReleaseTrackAudio(lua_State *L, AudioTrackState &track_state) {
 }
 
 bool Mixer::Init() {
+  log::Info("mixer", "initializing");
   if (!MIX_Init()) {
-    SDL_Log("MIX_Init failed: %s", SDL_GetError());
+    log::Error("mixer", "MIX_Init failed: {}", SDL_GetError());
     return false;
   }
 
   mixer_ = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
   if (!mixer_) {
-    SDL_Log("MIX_CreateMixerDevice failed: %s", SDL_GetError());
+    log::Error("mixer", "MIX_CreateMixerDevice failed: {}", SDL_GetError());
     MIX_Quit();
     return false;
   }
 
+  log::Info("mixer", "initialized successfully");
   return true;
 }
 
@@ -125,6 +129,10 @@ void Mixer::RegisterBindings(lua_State *L) {
   lua_setfield(L, -2, "set_mixer_gain");
 
   lua_setfield(L, -2, "audio");
+}
+
+std::unique_ptr<AsyncJob> Mixer::MakeLoadAudioJob() {
+  return std::make_unique<LoadAudioJob>();
 }
 
 void Mixer::LoadAudioJob::Invoke(lua_State *L) {
@@ -261,8 +269,8 @@ int Mixer::L_AudioTrackPlay(lua_State *L) {
   }
 
   if (fade_in_ms > 0 &&
-      !SDL_SetNumberProperty(props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER,
-                             fade_in_ms)) {
+      !SDL_SetNumberProperty(
+          props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, fade_in_ms)) {
     SDL_DestroyProperties(props);
     return luaL_error(L, "failed to set fade property: %s", SDL_GetError());
   }

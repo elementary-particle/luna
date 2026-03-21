@@ -4,114 +4,28 @@
 #include "lua.hpp"
 
 #include <SDL3/SDL.h>
-#include <SDL3_ttf/SDL_ttf.h>
+#include <SDL3/SDL_vulkan.h>
 
+#include <gpu/graphite/vk/VulkanGraphiteTypes.h>
 #include <memory>
 #include <optional>
 #include <string>
-#include <variant>
 #include <vector>
+
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+#include <vulkan/vulkan.hpp>
+
+#include <skia/core/SkFont.h>
+#include <skia/core/SkFontMgr.h>
+#include <skia/core/SkImage.h>
+#include <skia/core/SkStream.h>
+#include <skia/core/SkSurface.h>
+#include <skia/core/SkTypeface.h>
+#include <skia/gpu/graphite/Context.h>
 
 #include "factory.h"
 
 namespace luna {
-
-struct Rect {
-  float x = 0.0f;
-  float y = 0.0f;
-  float w = 0.0f;
-  float h = 0.0f;
-};
-
-struct Mat2D {
-  float a = 1.0f;
-  float b = 0.0f;
-  float c = 0.0f;
-  float d = 1.0f;
-  float tx = 0.0f;
-  float ty = 0.0f;
-};
-
-struct BlendState {
-  bool enabled = true;
-  SDL_BlendOperation color_op = SDL_BLENDOPERATION_ADD;
-  SDL_BlendFactor src_color = SDL_BLENDFACTOR_SRC_ALPHA;
-  SDL_BlendFactor dst_color = SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
-  SDL_BlendOperation alpha_op = SDL_BLENDOPERATION_ADD;
-  SDL_BlendFactor src_alpha = SDL_BLENDFACTOR_ONE;
-  SDL_BlendFactor dst_alpha = SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
-};
-
-struct Paint {
-  uint32_t color_abgr = 0xFFFFFFFFu;
-  float opacity = 1.0f;
-  BlendState blend{};
-};
-
-struct ClipRect {
-  bool enabled = false;
-  Rect rect{};
-};
-
-struct DrawState {
-  Paint paint{};
-  ClipRect clip{};
-};
-
-struct CompiledStyle {
-  DrawState draw_state{};
-  float rotation = 0.0f;
-  float origin_x = 0.0f;
-  float origin_y = 0.0f;
-  float scale_x = 1.0f;
-  float scale_y = 1.0f;
-  float align_x = 0.0f;
-  float align_y = 0.0f;
-  int wrap_width = 0;
-};
-
-struct DrawCmdRectFilled {
-  Rect rect{};
-  Mat2D transform{};
-  DrawState state{};
-};
-
-struct DrawCmdRectOutline {
-  Rect rect{};
-  Mat2D transform{};
-  DrawState state{};
-};
-
-struct DrawCmdImage {
-  int texture_ref = LUA_NOREF;
-  Rect rect{};
-  Mat2D transform{};
-  DrawState state{};
-};
-
-struct DrawCmdText {
-  int font_ref = LUA_NOREF;
-  std::string text;
-  Mat2D transform{};
-  DrawState state{};
-  float align_x = 0.0f;
-  float align_y = 0.0f;
-  int wrap_width = 0;
-};
-
-struct DrawList;
-
-struct DrawCmdLayer {
-  std::shared_ptr<DrawList> list;
-  DrawState state{};
-};
-
-using DrawCmd = std::variant<DrawCmdRectFilled, DrawCmdRectOutline, DrawCmdImage,
-                             DrawCmdText, DrawCmdLayer>;
-
-struct DrawList {
-  std::vector<DrawCmd> cmds;
-};
 
 class Renderer {
 private:
@@ -122,108 +36,116 @@ private:
     int y = 0;
   };
 
-  struct LuaTexture {
-    SDL_Texture *tex = nullptr;
+  struct DeviceCaps {
+    uint32_t queue_family_index;
+    vk::SurfaceFormatKHR surface_format;
+    vk::PresentModeKHR present_mode;
   };
 
-  struct LuaFont {
-    TTF_Font *font = nullptr;
-  };
-
-  struct LuaCanvas {
-    Renderer *renderer = nullptr;
-  };
-
-  struct LuaStyle {
-    CompiledStyle style{};
-  };
-
-  struct LayerBuildState {
-    std::shared_ptr<DrawList> list;
-    DrawState state{};
-  };
-
-  static LuaTexture *CheckLuaTexture(lua_State *L, int idx);
-  static LuaFont *CheckLuaFont(lua_State *L, int idx);
-  static LuaCanvas *CheckLuaCanvas(lua_State *L, int idx);
-  static LuaStyle *CheckLuaStyle(lua_State *L, int idx);
-  static SDL_Color ToSdlColor(uint32_t abgr);
-
-  SDL_Window *window_ = nullptr;
-  SDL_Renderer *sdl_ = nullptr;
-  int canvas_width_ = 1280;
-  int canvas_height_ = 720;
-  uint32_t clear_color_abgr_ = 0xFF141414u;
-
-  std::vector<PolledEvent> polled_events_;
-  DrawList draw_list_;
-  std::vector<Mat2D> transform_stack_;
-  std::vector<ClipRect> clip_stack_;
-  std::vector<LayerBuildState> layer_stack_;
-
-  void SetLuaGlobals(lua_State *L);
-  static Renderer *GetInstance(lua_State *L);
-
-  DrawList &ActiveDrawList();
-  const ClipRect &CurrentClip() const;
-  const Mat2D &CurrentTransform() const;
-  void ClearDrawList(lua_State *L, DrawList &list);
-  void RenderDrawList(lua_State *L, const DrawList &list);
-  SDL_Texture *RenderLayerToTexture(lua_State *L, const DrawList &list);
-
-  static int L_PollSdlEvents(lua_State *L);
-  static int L_TextureDestroy(lua_State *L);
-  static int L_FontDestroy(lua_State *L);
-  static int L_FontMeasure(lua_State *L);
-  static int L_GfxSetCanvasSize(lua_State *L);
-  static int L_GfxClear(lua_State *L);
-  static int L_GfxPresent(lua_State *L);
-  static int L_GfxRect(lua_State *L);
-  static int L_GfxRectOutline(lua_State *L);
-  static int L_GfxImage(lua_State *L);
-  static int L_GfxText(lua_State *L);
-  static int L_GfxStyle(lua_State *L);
-  static int L_GfxPushTransform(lua_State *L);
-  static int L_GfxPopTransform(lua_State *L);
-  static int L_GfxTranslate(lua_State *L);
-  static int L_GfxScale(lua_State *L);
-  static int L_GfxRotate(lua_State *L);
-  static int L_GfxPushClip(lua_State *L);
-  static int L_GfxPopClip(lua_State *L);
-  static int L_GfxBeginLayer(lua_State *L);
-  static int L_GfxEndLayer(lua_State *L);
-
-public:
   class LoadImageJob : public AsyncJob {
   public:
+    explicit LoadImageJob(skgpu::graphite::Recorder *recorder)
+        : recorder_(recorder) {}
     void Invoke(lua_State *L) override;
     void Run() override;
     int Finish(lua_State *L) override;
-    ~LoadImageJob();
+    ~LoadImageJob() = default;
 
   private:
+    skgpu::graphite::Recorder *recorder_;
     std::string path_;
-    SDL_IOStream *io_ = nullptr;
-    SDL_Surface *surface_ = nullptr;
+    std::unique_ptr<SkStreamAsset> file_;
+    sk_sp<SkImage> image_;
   };
 
-  class LoadFontJob : public AsyncJob {
+  class LoadTypefaceJob : public AsyncJob {
   public:
+    explicit LoadTypefaceJob(sk_sp<SkFontMgr> font_mgr)
+        : font_mgr_(std::move(font_mgr)) {}
     void Invoke(lua_State *L) override;
     void Run() override;
     int Finish(lua_State *L) override;
 
   private:
+    sk_sp<SkFontMgr> font_mgr_;
     std::string path_;
     float size_pt_ = 0.0f;
+    std::unique_ptr<SkStreamAsset> file_;
+    sk_sp<SkTypeface> typeface_;
   };
 
+  void InitVulkan();
+  void CreateSwapchain();
+  void InitSkia();
+  void FiniSkia();
+  void DestroySwapchain();
+  bool UpdateWindowMetrics(bool *changed = nullptr);
+  bool EnsureGraphicsReady();
+  void RecreateSwapchain();
+  void PumpSdlEvents();
+  void SetFatalError(std::string message);
+
+  static int L_PollSdlEvents(lua_State *L);
+  static int L_MakeCanvas(lua_State *L);
+
+  SDL_Window *window_ = nullptr;
+  int window_canvas_ref_ = LUA_NOREF;
+
+  vk::Instance vk_instance_;
+#if !defined NDEBUG
+  vk::DebugUtilsMessengerEXT debug_messenger_;
+#endif
+  vk::SurfaceKHR surface_;
+  vk::PhysicalDevice physical_device_;
+  DeviceCaps device_caps_;
+  vk::Device device_;
+  vk::Queue graphics_queue_;
+
+  vk::SwapchainKHR swapchain_;
+  std::vector<vk::Image> swapchain_images_;
+  vk::Extent2D surface_extent_;
+  std::vector<vk::ImageView> swapchain_image_views_;
+
+  // Synchronization objects
+  uint32_t image_count_, image_index_;
+  std::deque<vk::Semaphore> acquired_sems_;
+  std::vector<vk::Semaphore> signaled_sems_;
+  std::vector<vk::Semaphore> rendered_sems_;
+
+  skgpu::graphite::VulkanTextureInfo texture_info_;
+  std::unique_ptr<skgpu::graphite::Context> sk_context_;
+  std::unique_ptr<skgpu::graphite::Recorder> sk_recorder_;
+  sk_sp<SkFontMgr> font_mgr_;
+
+  int window_width_ = 1280;
+  int window_height_ = 720;
+  int canvas_width_ = 1280;
+  int canvas_height_ = 720;
+  float canvas_scale_x_ = 1.0f;
+  float canvas_scale_y_ = 1.0f;
+  bool sdl_ready_ = false;
+  bool graphics_ready_ = false;
+  bool swapchain_dirty_ = false;
+  bool frame_active_ = false;
+  bool fatal_error_ = false;
+  std::string fatal_error_message_;
+
+  std::vector<PolledEvent> polled_events_;
+
+public:
   Renderer();
 
   bool Init();
   void Fini();
-  void PumpSdlEvents();
+  bool BeginFrame(lua_State *L);
+  bool EndFrame();
   void RegisterBindings(lua_State *L);
+  bool SetWindowSize(int width, int height);
+  bool HasFatalError() const { return fatal_error_; }
+  const std::string &GetFatalError() const { return fatal_error_message_; }
+
+  std::unique_ptr<AsyncJob> MakeLoadImageJob();
+  std::unique_ptr<AsyncJob> MakeLoadTypefaceJob();
 };
 
 } // namespace luna

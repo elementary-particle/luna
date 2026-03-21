@@ -3,9 +3,6 @@
 
 #include "lua.hpp"
 
-#include <SDL3/SDL.h>
-#include <SDL3_ttf/SDL_ttf.h>
-
 #include <chrono>
 #include <deque>
 #include <memory>
@@ -91,20 +88,21 @@ private:
     ~PromiseState();
   };
 
-  struct LuaEvent {
+  struct LEvent {
+    static constexpr const char *MT = "luna.Event";
     std::shared_ptr<EventState> state;
   };
 
-  struct LuaPromise {
+  struct LPromise {
+    static constexpr const char *MT = "luna.Promise";
     std::shared_ptr<PromiseState> state;
   };
 
   Renderer renderer_;
   Mixer mixer_;
-
   VFS vfs_;
 
-  lua_State *L_ = nullptr;
+  lua_State *L_;
 
   double now_seconds_ = 0.0;
   std::chrono::duration<double> frame_time_;
@@ -120,7 +118,6 @@ private:
 
   bool InitLua();
 
-  static Engine *GetEngine(lua_State *L);
   void RegisterBindings(lua_State *L);
   void RegisterLuaTypes(lua_State *L);
   bool CallLuaMain(const std::string &entry_path);
@@ -141,33 +138,25 @@ private:
 
   std::shared_ptr<EventState> CreateEvent() const;
   void SignalEvent(const std::shared_ptr<EventState> &event);
-  static int PushEventObject(lua_State *L,
-                             const std::shared_ptr<EventState> &event);
-  static int PushPromiseObject(lua_State *L,
-                               const std::shared_ptr<PromiseState> &promise);
-  static LuaEvent *CheckEvent(lua_State *L, int idx);
-  static LuaPromise *CheckPromise(lua_State *L, int idx);
 
   static int YieldWithWait(lua_State *L);
 
   static int L_Start(lua_State *L);
   static int L_NextFrame(lua_State *L);
-  static int L_Event(lua_State *L);
+  static int L_MakeEvent(lua_State *L);
   static int L_Wait(lua_State *L);
   static int L_Now(lua_State *L);
   static int L_After(lua_State *L);
   static int L_SetFrameTime(lua_State *L);
+  static int L_SetWindowSize(lua_State *L);
 
   static int L_EventSignal(lua_State *L);
-  static int L_EventGc(lua_State *L);
   static int L_PromisePoll(lua_State *L);
   static int L_PromiseTake(lua_State *L);
-  static int L_PromiseIndex(lua_State *L);
-  static int L_PromiseGc(lua_State *L);
+  static int L_PromiseEvent(lua_State *L);
 
-  template <typename J> static int L_StartAsyncJob(lua_State *L) {
-    Engine *e = GetEngine(L);
-    std::unique_ptr<AsyncJob> job(std::make_unique<J>());
+  static inline int L_StartAsyncJob(lua_State *L, Engine *e,
+                                    std::unique_ptr<AsyncJob> &&job) {
     job->Invoke(L);
 
     const PromiseId promise_id = e->factory_.EnqueueJob(std::move(job));
@@ -176,7 +165,8 @@ private:
     promise->id = promise_id;
     promise->event = e->CreateEvent();
     e->pending_promises_[promise_id] = promise;
-    return PushPromiseObject(L, promise);
+    lua::New<LPromise>(L, promise);
+    return 1;
   }
 };
 

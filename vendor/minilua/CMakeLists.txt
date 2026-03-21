@@ -9,7 +9,7 @@ endif()
 add_executable(minilua ${LUAJIT_DIR}/src/host/minilua.c)
 
 if(MSVC)
-  target_compile_options(buildvm PRIVATE -D_CRT_SECURE_NO_WARNINGS)
+  target_compile_options(minilua PRIVATE -D_CRT_SECURE_NO_WARNINGS)
 endif()
 
 if(LIBM_LIBRARIES)

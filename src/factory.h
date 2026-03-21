@@ -1,8 +1,6 @@
 #ifndef LUNA_FACTORY_H
 #define LUNA_FACTORY_H
 
-#include "lua.hpp"
-
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -14,6 +12,8 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+class lua_State;
 
 namespace luna {
 
@@ -57,9 +57,12 @@ private:
 
 class Factory {
 public:
+  ~Factory();
+
   void Start();
   PromiseId EnqueueJob(std::unique_ptr<AsyncJob> &&job);
   std::vector<CompletedJob> DrainCompletions();
+  void Shutdown();
 
 private:
   static constexpr int WORKER_COUNT = 2;
@@ -71,6 +74,7 @@ private:
   std::condition_variable_any jobs_cv_;
   std::deque<CompletedJob> jobs_;
   std::vector<std::jthread> workers_;
+  bool shutting_down_ = false;
 
   void WorkerMain(std::stop_token stop_token);
 };

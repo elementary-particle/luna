@@ -1,0 +1,24 @@
+diff --git a/src/gpu/graphite/vk/VulkanBackendSemaphore.cpp b/src/gpu/graphite/vk/VulkanBackendSemaphore.cpp
+index 7df6bf1..dd7700b 100644
+--- a/src/gpu/graphite/vk/VulkanBackendSemaphore.cpp
++++ b/src/gpu/graphite/vk/VulkanBackendSemaphore.cpp
+@@ -5,6 +5,7 @@
+  * found in the LICENSE file.
+  */
+ #include "include/core/SkString.h"
++#include "include/gpu/graphite/vk/VulkanGraphiteTypes.h"
+ #include "include/gpu/GpuTypes.h"
+ #include "include/gpu/graphite/BackendSemaphore.h"
+ #include "include/private/gpu/vk/SkiaVulkan.h"
+diff --git a/src/gpu/graphite/vk/VulkanGraphiteUtils.cpp b/src/gpu/graphite/vk/VulkanGraphiteUtils.cpp
+index 72ed572..fc7ab1c 100644
+--- a/src/gpu/graphite/vk/VulkanGraphiteUtils.cpp
++++ b/src/gpu/graphite/vk/VulkanGraphiteUtils.cpp
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include "src/gpu/graphite/vk/VulkanGraphiteUtils.h"
++#include "include/gpu/graphite/vk/VulkanGraphiteContext.h"
+ 
+ #include "include/core/SkStream.h"
+ #include "include/gpu/ShaderErrorHandler.h"

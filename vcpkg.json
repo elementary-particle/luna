@@ -6,6 +6,7 @@
       "default-features": false,
       "platform": "linux"
     },
+    "vulkan-memory-allocator",
     {
       "name": "sdl3",
       "features": [
@@ -13,22 +14,19 @@
       ]
     },
     {
-      "name": "sdl3-image",
-      "features": [
-        "png",
-        "jpeg",
-        "webp",
-        "jxl"
-      ]
-    },
-    "sdl3-ttf",
-    {
       "name": "sdl3-mixer",
       "features": [
         "wave",
         "vorbis",
         "opus",
         "mp3"
+      ]
+    },
+    {
+      "name": "skia",
+      "features": [
+        "vulkan",
+        "graphite"
       ]
     }
   ]

@@ -26,6 +26,20 @@ private:
     int audio_ref = LUA_NOREF;
   };
 
+  class LoadAudioJob : public AsyncJob {
+  public:
+    ~LoadAudioJob() override;
+    void Invoke(lua_State *L) override;
+    void Run() override;
+    int Finish(lua_State *L) override;
+
+  private:
+    std::string path_;
+    bool predecode_ = false;
+    MIX_Mixer *mixer_ = nullptr;
+    MIX_Audio *audio_ = nullptr;
+  };
+
   MIX_Mixer *mixer_ = nullptr;
   uint64_t next_audio_track_id_ = 1;
   std::unordered_map<uint64_t, AudioTrackState> audio_tracks_;
@@ -47,26 +61,14 @@ private:
   static int L_AudioDestroy(lua_State *L);
 
 public:
-  class LoadAudioJob : public AsyncJob {
-  public:
-    ~LoadAudioJob() override;
-    void Invoke(lua_State *L) override;
-    void Run() override;
-    int Finish(lua_State *L) override;
-
-  private:
-    std::string path_;
-    bool predecode_ = false;
-    MIX_Mixer *mixer_ = nullptr;
-    MIX_Audio *audio_ = nullptr;
-  };
-
   bool Init();
   void Fini(lua_State *L = nullptr);
 
   void RegisterBindings(lua_State *L);
+
+  std::unique_ptr<AsyncJob> MakeLoadAudioJob();
 };
 
-}
+} // namespace luna
 
 #endif

@@ -15,26 +15,33 @@ add_executable(
   src/main.cpp
   src/engine.cpp
   src/factory.cpp
+  src/log.cpp
   src/mixer.cpp
+  src/canvas.cpp
   src/renderer.cpp
   src/vfs.cpp
+  src/vma.cpp
 )
 
 set_target_properties(luna PROPERTIES OUTPUT_NAME "luna")
 
 find_package(fmt CONFIG REQUIRED)
+find_package(VulkanHeaders CONFIG REQUIRED)
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
-find_package(SDL3_image CONFIG REQUIRED)
-find_package(SDL3_ttf CONFIG REQUIRED)
 find_package(SDL3_mixer CONFIG REQUIRED)
+find_package(unofficial-skia CONFIG REQUIRED)
 
 # Link libraries
 target_link_libraries(
   luna PRIVATE
+  Vulkan::Headers
+  GPUOpen::VulkanMemoryAllocator
   fmt::fmt
   SDL3::SDL3
-  SDL3_image::SDL3_image
-  SDL3_ttf::SDL3_ttf
   SDL3_mixer::SDL3_mixer
+  unofficial::skia::skia
+  unofficial::skia::modules::skparagraph
+  unofficial::skia::modules::skunicode_icu
   luajit::lib
 )

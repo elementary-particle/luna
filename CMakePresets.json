@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 6,
   "configurePresets": [
     {
       "name": "vcpkg",
@@ -7,9 +7,23 @@
       "binaryDir": "${sourceDir}/build",
       "environment": {},
       "cacheVariables": {
-        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg-ports",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg-ports",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "vcpkg-x64-linux",
+      "inherits": "vcpkg",
+      "environment": {
+        "VCPKG_DEFAULT_TRIPLET": "x64-linux-clang-dynamic"
+      },
+      "cacheVariables": {
+        "VCPKG_HOST_TRIPLET": "x64-linux-clang-dynamic",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-clang-dynamic",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_LINKER": "ld.lld"
       }
     }
   ]
