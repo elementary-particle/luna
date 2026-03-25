@@ -139,7 +139,7 @@ void Engine::RegisterBindings(lua_State *L) {
       [](lua_State *L) {
         Engine *e =
             static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(L, e, e->renderer_.MakeLoadTypefaceJob());
+        return L_StartAsyncJob(L, e, e->renderer_.MakeRegisterFontJob());
       },
       1);
   lua_setfield(L, -2, "load_fontface");

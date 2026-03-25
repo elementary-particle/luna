@@ -26,14 +26,6 @@ struct LImage {
   explicit LImage(sk_sp<SkImage> image) : sk(std::move(image)) {}
 };
 
-struct LTypeface {
-  static constexpr const char *MT = "luna.Typeface";
-  sk_sp<SkTypeface> sk;
-
-  LTypeface() = default;
-  explicit LTypeface(sk_sp<SkTypeface> typeface) : sk(std::move(typeface)) {}
-};
-
 struct LParagraph {
   static constexpr const char *MT = "luna.Paragraph";
   sk_sp<skia::textlayout::FontCollection> font_collection;
@@ -50,7 +42,7 @@ struct LParagraph {
 };
 
 class LCanvas {
-private:
+public:
   struct LPaint {
     static constexpr const char *MT = "luna.Paint";
     SkPaint sk;
@@ -58,8 +50,13 @@ private:
 
   struct LFont {
     static constexpr const char *MT = "luna.Font";
-    SkFont sk;
+    SkScalar size = 0;
+    SkString family_name;
+    SkFontStyle style = SkFontStyle();
+    bool has_family = false;
   };
+
+private:
 
   SkCanvas *sk_ = nullptr;
   sk_sp<SkSurface> surface_;

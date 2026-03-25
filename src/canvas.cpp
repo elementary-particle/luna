@@ -3,6 +3,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <skia/core/SkFont.h>
@@ -41,10 +42,8 @@ TextAlign CheckTextAlign(lua_State *L, int idx) {
   return static_cast<TextAlign>(luaL_checkinteger(L, idx));
 }
 
-void PushTextMetricsTable(lua_State *L,
-                          SkScalar advance_width,
-                          const SkRect &bounds,
-                          const SkFontMetrics &metrics) {
+void PushTextMetricsTable(lua_State *L, SkScalar advance_width,
+                          const SkRect &bounds, const SkFontMetrics &metrics) {
   lua_createtable(L, 0, 9);
   lua_pushnumber(L, advance_width);
   lua_setfield(L, -2, "advance_width");
@@ -90,18 +89,31 @@ void PushParagraphMetricsTable(lua_State *L, LParagraph *paragraph) {
   lua_setfield(L, -2, "line_height");
 }
 
-SkString MakeParagraphFontFamily(const SkFont &font) {
-  sk_sp<SkTypeface> typeface = font.refTypeface();
-  if (!typeface) {
-    return SkString(DEFAULT_FONT_FAMILY);
+SkFont ResolveFont(lua_State *L,
+                   LCanvas *canvas,
+                   const LCanvas::LFont &font,
+                   const char *operation) {
+  SkFont resolved;
+  resolved.setSize(font.size);
+
+  if (!font.has_family) {
+    return resolved;
+  }
+  if (!canvas->font_mgr()) {
+    luaL_error(L, "%s: canvas has no font manager", operation);
   }
 
-  SkString family_name;
-  typeface->getFamilyName(&family_name);
-  if (family_name.isEmpty()) {
-    family_name = SkString("luna-user-font");
+  sk_sp<SkTypeface> typeface = canvas->font_mgr()->matchFamilyStyle(
+      font.family_name.c_str(), font.style);
+  if (!typeface) {
+    luaL_error(L,
+               "%s: failed to resolve family '%s'",
+               operation,
+               font.family_name.c_str());
   }
-  return family_name;
+
+  resolved.setTypeface(std::move(typeface));
+  return resolved;
 }
 
 } // namespace
@@ -142,7 +154,17 @@ return function(canvas_mt)
 
   local allowed_font_keys = {
     size = true,
-    typeface = true,
+    family = true,
+    style = true,
+    weight = true,
+    width = true,
+    slant = true,
+  }
+
+  local allowed_font_style_keys = {
+    weight = true,
+    width = true,
+    slant = true,
   }
 
   local allowed_paragraph_keys = {
@@ -191,6 +213,48 @@ return function(canvas_mt)
     return mapped
   end
 
+  local function normalize_font_style_value(kind, value, map, level)
+    if value == nil then
+      return nil
+    end
+    if type(value) == "number" then
+      return value
+    end
+    if type(value) ~= "string" then
+      error(string.format("font.%s must be a number or string", kind), level or 3)
+    end
+
+    local mapped = map[value]
+    if mapped == nil then
+      error(string.format("invalid font.%s '%s'", kind, value), level or 3)
+    end
+    return mapped
+  end
+
+  local function compile_font_style(font, level)
+    local style = font.style
+    if style ~= nil then
+      if type(style) ~= "table" then
+        error("font.style must be a table", level or 3)
+      end
+      if font.weight ~= nil or font.width ~= nil or font.slant ~= nil then
+        error("font.style cannot be combined with font.weight/font.width/font.slant", level or 3)
+      end
+      for key in pairs(style) do
+        if not allowed_font_style_keys[key] then
+          error(string.format("unknown font.style field '%s'", tostring(key)), level or 3)
+        end
+      end
+      font = style
+    end
+
+    return {
+      weight = normalize_font_style_value("weight", font.weight, constants.font_style.weight, (level or 3) + 1),
+      width = normalize_font_style_value("width", font.width, constants.font_style.width, (level or 3) + 1),
+      slant = normalize_font_style_value("slant", font.slant, constants.font_style.slant, (level or 3) + 1),
+    }
+  end
+
   local function compile_paint(self, paint, level)
     if paint == nil or type(paint) == "userdata" then
       return paint
@@ -232,7 +296,12 @@ return function(canvas_mt)
       error("font.size is required", level or 3)
     end
 
-    return raw_font(self, font.size, font.typeface)
+    local style = compile_font_style(font, level)
+    if font.family == nil and (style.weight ~= nil or style.width ~= nil or style.slant ~= nil) then
+      error("font.family is required when specifying font style", level or 3)
+    end
+
+    return raw_font(self, font.size, font.family, style.weight, style.width, style.slant)
   end
 
   function canvas_mt:paint(paint)
@@ -447,6 +516,73 @@ void LCanvas::RegisterBindings(lua_State *L) {
 
     lua_setfield(L, -2, "text_align");
 
+    lua_newtable(L);
+
+    lua_newtable(L);
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kThin_Weight));
+    lua_setfield(L, -2, "thin");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kExtraLight_Weight));
+    lua_setfield(L, -2, "extra_light");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kLight_Weight));
+    lua_setfield(L, -2, "light");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kNormal_Weight));
+    lua_setfield(L, -2, "normal");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kMedium_Weight));
+    lua_setfield(L, -2, "medium");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kSemiBold_Weight));
+    lua_setfield(L, -2, "semi_bold");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kBold_Weight));
+    lua_setfield(L, -2, "bold");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kExtraBold_Weight));
+    lua_setfield(L, -2, "extra_bold");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kBlack_Weight));
+    lua_setfield(L, -2, "black");
+    lua_setfield(L, -2, "weight");
+
+    lua_newtable(L);
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kUltraCondensed_Width));
+    lua_setfield(L, -2, "ultra_condensed");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kExtraCondensed_Width));
+    lua_setfield(L, -2, "extra_condensed");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kCondensed_Width));
+    lua_setfield(L, -2, "condensed");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kSemiCondensed_Width));
+    lua_setfield(L, -2, "semi_condensed");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kNormal_Width));
+    lua_setfield(L, -2, "normal");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kSemiExpanded_Width));
+    lua_setfield(L, -2, "semi_expanded");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kExpanded_Width));
+    lua_setfield(L, -2, "expanded");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kExtraExpanded_Width));
+    lua_setfield(L, -2, "extra_expanded");
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kUltraExpanded_Width));
+    lua_setfield(L, -2, "ultra_expanded");
+    lua_setfield(L, -2, "width");
+
+    lua_newtable(L);
+    lua_pushinteger(
+        L, static_cast<lua_Integer>(SkFontStyle::kUpright_Slant));
+    lua_setfield(L, -2, "upright");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kItalic_Slant));
+    lua_setfield(L, -2, "italic");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kOblique_Slant));
+    lua_setfield(L, -2, "oblique");
+    lua_setfield(L, -2, "slant");
+
+    lua_setfield(L, -2, "font_style");
+
     lua_setfield(L, -2, "_constants");
 
     lua::PushFunction(L, [](lua_State *L) {
@@ -475,12 +611,26 @@ void LCanvas::RegisterBindings(lua_State *L) {
       lua::Check<LCanvas>(L, 1);
 
       auto *font = lua::New<LFont>(L);
-      font->sk.setSize(
-          SkFloatToScalar(static_cast<float>(luaL_checknumber(L, 2))));
+      font->size = SkFloatToScalar(static_cast<float>(luaL_checknumber(L, 2)));
       if (!lua_isnoneornil(L, 3)) {
-        LTypeface *typeface = lua::Check<LTypeface>(L, 3);
-        font->sk.setTypeface(typeface->sk);
+        const char *family = luaL_checkstring(L, 3);
+        if (!family || !*family) {
+          return luaL_error(L, "font: family must not be empty");
+        }
+        font->family_name = SkString(family);
+        font->has_family = true;
       }
+      const int weight = lua_isnoneornil(L, 4)
+                             ? static_cast<int>(SkFontStyle::kNormal_Weight)
+                             : static_cast<int>(luaL_checkinteger(L, 4));
+      const int width = lua_isnoneornil(L, 5)
+                            ? static_cast<int>(SkFontStyle::kNormal_Width)
+                            : static_cast<int>(luaL_checkinteger(L, 5));
+      const auto slant =
+          lua_isnoneornil(L, 6)
+              ? SkFontStyle::kUpright_Slant
+              : static_cast<SkFontStyle::Slant>(luaL_checkinteger(L, 6));
+      font->style = SkFontStyle(weight, width, slant);
       return 1;
     });
     lua_setfield(L, -2, "_font");
@@ -556,19 +706,20 @@ void LCanvas::RegisterBindings(lua_State *L) {
       }
 
       SkPaint default_paint;
+      const SkFont sk_font = ResolveFont(L, canvas, *font, "draw_text");
       canvas->sk_->drawSimpleText(text,
                                   text_len,
                                   SkTextEncoding::kUTF8,
                                   SkFloatToScalar(x),
                                   SkFloatToScalar(y),
-                                  font->sk,
+                                  sk_font,
                                   paint ? paint->sk : default_paint);
       return 0;
     });
     lua_setfield(L, -2, "_draw_text");
 
     lua::PushFunction(L, [](lua_State *L) {
-      lua::Check<LCanvas>(L, 1);
+      LCanvas *canvas = lua::Check<LCanvas>(L, 1);
       size_t text_len = 0;
       const char *text = luaL_checklstring(L, 2, &text_len);
       LFont *font = lua::Check<LFont>(L, 3);
@@ -580,13 +731,14 @@ void LCanvas::RegisterBindings(lua_State *L) {
 
       SkRect bounds = SkRect::MakeEmpty();
       SkFontMetrics metrics;
+      const SkFont sk_font = ResolveFont(L, canvas, *font, "measure_text");
       const SkScalar advance_width =
-          font->sk.measureText(text,
-                               text_len,
-                               SkTextEncoding::kUTF8,
-                               &bounds,
-                               paint ? &paint->sk : nullptr);
-      font->sk.getMetrics(&metrics);
+          sk_font.measureText(text,
+                              text_len,
+                              SkTextEncoding::kUTF8,
+                              &bounds,
+                              paint ? &paint->sk : nullptr);
+      sk_font.getMetrics(&metrics);
       PushTextMetricsTable(L, advance_width, bounds, metrics);
       return 1;
     });
@@ -639,13 +791,11 @@ void LCanvas::RegisterBindings(lua_State *L) {
 
       TextStyle text_style;
       text_style.setColor(color);
-      text_style.setFontSize(
-          font ? font->sk.getSize() : SkFloatToScalar(14.0f));
+      text_style.setFontSize(font ? font->size : SkFloatToScalar(14.0f));
 
-      if (font && font->sk.refTypeface()) {
-        const SkString family_name = MakeParagraphFontFamily(font->sk);
-        text_style.setFontFamilies({family_name});
-        text_style.setFontStyle(font->sk.refTypeface()->fontStyle());
+      if (font && font->has_family) {
+        text_style.setFontFamilies({font->family_name});
+        text_style.setFontStyle(font->style);
       } else {
         text_style.setFontFamilies({SkString(DEFAULT_FONT_FAMILY)});
       }
@@ -680,10 +830,8 @@ void LCanvas::RegisterBindings(lua_State *L) {
 
       const SkScalar layout_width = SkFloatToScalar(width);
       paragraph->layout(layout_width);
-      lua::New<LParagraph>(L,
-                           std::move(font_collection),
-                           std::move(paragraph),
-                           layout_width);
+      lua::New<LParagraph>(
+          L, std::move(font_collection), std::move(paragraph), layout_width);
       return 1;
     });
     lua_setfield(L, -2, "_paragraph");
@@ -696,8 +844,7 @@ void LCanvas::RegisterBindings(lua_State *L) {
       if (!paragraph->sk) {
         return luaL_error(L, "draw_paragraph: paragraph is empty");
       }
-      paragraph->sk->paint(
-          canvas->sk_, SkFloatToScalar(x), SkFloatToScalar(y));
+      paragraph->sk->paint(canvas->sk_, SkFloatToScalar(x), SkFloatToScalar(y));
       return 0;
     });
     lua_setfield(L, -2, "_draw_paragraph");

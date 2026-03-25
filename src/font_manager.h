@@ -1,0 +1,21 @@
+#ifndef LUNA_FONT_MANAGER_H
+#define LUNA_FONT_MANAGER_H
+
+#include <memory>
+
+#include <skia/core/SkFontMgr.h>
+#include <skia/core/SkFontStyle.h>
+
+class SkStreamAsset;
+
+namespace luna {
+
+sk_sp<SkFontMgr> MakeRuntimeFontManager();
+bool RegisterRuntimeFont(const sk_sp<SkFontMgr> &font_mgr,
+                         std::unique_ptr<SkStreamAsset> stream,
+                         const char family_name[],
+                         const SkFontStyle &style);
+
+} // namespace luna
+
+#endif
