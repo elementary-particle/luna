@@ -9,6 +9,7 @@
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg-ports",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/vcpkg-triplets",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     },
@@ -16,14 +17,48 @@
       "name": "vcpkg-x64-linux",
       "inherits": "vcpkg",
       "environment": {
+        "VCPKG_DEFAULT_TRIPLET": "x64-linux-clang-lto"
+      },
+      "cacheVariables": {
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/vcpkg-triplets/linux-clang-toolchain.cmake",
+        "VCPKG_TARGET_ARCHITECTURE": "x64",
+        "VCPKG_CRT_LINKAGE": "dynamic",
+        "VCPKG_LIBRARY_LINKAGE": "static",
+        "VCPKG_HOST_TRIPLET": "x64-linux-clang-lto",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-clang-lto",
+        "VCPKG_USE_LTO": "ON"
+      }
+    },
+    {
+      "name": "vcpkg-x64-linux-debug",
+      "inherits": "vcpkg",
+      "environment": {
         "VCPKG_DEFAULT_TRIPLET": "x64-linux-clang-dynamic"
       },
       "cacheVariables": {
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/vcpkg-triplets/linux-clang-toolchain.cmake",
+        "VCPKG_TARGET_ARCHITECTURE": "x64",
+        "VCPKG_CRT_LINKAGE": "dynamic",
+        "VCPKG_LIBRARY_LINKAGE": "dynamic",
         "VCPKG_HOST_TRIPLET": "x64-linux-clang-dynamic",
         "VCPKG_TARGET_TRIPLET": "x64-linux-clang-dynamic",
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_LINKER": "ld.lld"
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "vcpkg-x64-windows",
+      "inherits": "vcpkg",
+      "environment": {
+        "VCPKG_DEFAULT_TRIPLET": "x64-windows-clangcl-lto"
+      },
+      "cacheVariables": {
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/vcpkg-triplets/windows-clangcl-toolchain.cmake",
+        "VCPKG_TARGET_ARCHITECTURE": "x64",
+        "VCPKG_CRT_LINKAGE": "static",
+        "VCPKG_LIBRARY_LINKAGE": "static",
+        "VCPKG_HOST_TRIPLET": "x64-windows-clangcl-lto",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-clangcl-lto",
+        "VCPKG_USE_LTO": "ON"
       }
     }
   ]

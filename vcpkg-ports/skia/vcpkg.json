@@ -13,11 +13,6 @@
     "abseil",
     "expat",
     {
-      "name": "opengl",
-      "default-features": false,
-      "platform": "windows & !arm64 & !uwp"
-    },
-    {
       "name": "vcpkg-cmake-config",
       "host": true
     },
@@ -55,10 +50,6 @@
     {
       "name": "freetype",
       "platform": "!(windows | osx | ios)"
-    },
-    {
-      "name": "gl",
-      "platform": "!(windows & arm) & !uwp"
     },
     {
       "name": "harfbuzz",
@@ -106,7 +97,16 @@
     },
     "direct3d": {
       "description": "Direct3D support for skia",
-      "supports": "windows"
+      "supports": "windows",
+      "dependencies": [
+        {
+          "name": "skia",
+          "default-features": false,
+          "features": [
+            "ganesh"
+          ]
+        }
+      ]
     },
     "dng": {
       "description": "Support for DNG files",
@@ -142,8 +142,23 @@
       "description": "OpenGL support for skia",
       "supports": "!(windows & arm) & !uwp",
       "dependencies": [
-        "opengl-registry"
+        "opengl-registry",
+        {
+          "name": "opengl",
+          "default-features": false,
+          "platform": "windows & !arm64 & !uwp"
+        },
+        {
+          "name": "skia",
+          "default-features": false,
+          "features": [
+            "ganesh"
+          ]
+        }
       ]
+    },
+    "ganesh": {
+      "description": "Ganesh GPU backend support"
     },
     "graphite": {
       "description": "Graphite support",

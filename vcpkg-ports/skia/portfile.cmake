@@ -221,6 +221,12 @@ if("direct3d" IN_LIST FEATURES)
     string(APPEND OPTIONS " skia_use_direct3d=true")
 endif()
 
+if("ganesh" IN_LIST FEATURES)
+    string(APPEND OPTIONS " skia_enable_ganesh=true")
+else()
+    string(APPEND OPTIONS " skia_enable_ganesh=false")
+endif()
+
 if("graphite" IN_LIST FEATURES)
     string(APPEND OPTIONS " skia_enable_graphite=true")
 else()
