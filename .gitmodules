@@ -1,0 +1,9 @@
+[submodule "vendor/luajit"]
+	path = vendor/luajit
+	url = https://github.com/LuaJIT/LuaJIT.git
+[submodule "vendor/asmjit"]
+	path = vendor/asmjit
+	url = https://github.com/asmjit/asmjit
+[submodule "vendor/blend2d"]
+	path = vendor/blend2d
+	url = https://github.com/blend2d/blend2d

@@ -24,9 +24,15 @@
     },
     {
       "name": "skia",
+      "default-features": false,
       "features": [
         "vulkan",
-        "graphite"
+        "graphite",
+        "freetype",
+        "harfbuzz",
+        "jpeg",
+        "png",
+        "webp"
       ]
     }
   ]

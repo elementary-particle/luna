@@ -203,7 +203,7 @@ endif()
 
 # -fno-stack-protector
 check_c_compiler_flag(-fno-stack-protector HAVE_FLAG)
-if(HAVE_FLAG)
+if(HAVE_FLAG AND NOT MSVC)
   list(APPEND LJ_CFLAGS -fno-stack-protector)
 endif()
 
@@ -702,12 +702,6 @@ if("${TARGET_ARCH}" STREQUAL "x86")
 endif()
 
 set(LJ_COMPILE_OPTIONS -U_FORTIFY_SOURCE)
-if(NO_STACK_PROTECTOR_FLAG)
-  set(LJ_COMPILE_OPTIONS ${LJ_COMPILE_OPTIONS} -fno-stack-protector)
-endif()
-if(IOS AND ("${TARGET_ARCH}" STREQUAL "arm64"))
-  set(LJ_COMPILE_OPTIONS ${LJ_COMPILE_OPTIONS} -fno-omit-frame-pointer)
-endif()
 
 target_compile_options(libluajit PRIVATE ${LJ_COMPILE_OPTIONS})
 if(MSVC)

@@ -15,6 +15,7 @@ add_executable(
   src/main.cpp
   src/engine.cpp
   src/factory.cpp
+  src/font_manager.cpp
   src/log.cpp
   src/mixer.cpp
   src/canvas.cpp
