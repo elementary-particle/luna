@@ -1,0 +1,122 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            preset: vcpkg-x64-linux
+            artifact: luna-linux
+            executable: build/luna
+          - name: Windows
+            os: windows-2025-vs2026
+            preset: vcpkg-x64-windows
+            artifact: luna-windows
+            executable: build/luna.exe
+            msvc_arch: amd64
+
+    env:
+      LUNA_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.cache/vcpkg/archives
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.cache/vcpkg/archives,readwrite
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+          vsversion: "18.0"
+
+      - name: Install Linux toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf \
+            autoconf-archive \
+            automake \
+            clang \
+            libtool \
+            lld \
+            ninja-build \
+            pkg-config \
+            libunwind-dev
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libaudio-dev libjack-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libwayland-dev libxkbcommon-dev libegl1-mesa-dev
+
+      - name: Set up vcpkg
+        shell: bash
+        run: git clone https://github.com/microsoft/vcpkg.git "${LUNA_VCPKG_ROOT}"
+
+      - name: Create vcpkg cache directories
+        shell: bash
+        run: mkdir -p "${VCPKG_DEFAULT_BINARY_CACHE}" "${LUNA_VCPKG_ROOT}/downloads"
+
+      - name: Bootstrap vcpkg on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: VCPKG_ROOT="${LUNA_VCPKG_ROOT}" "${LUNA_VCPKG_ROOT}/bootstrap-vcpkg.sh"
+
+      - name: Bootstrap vcpkg on Windows
+        if: runner.os == 'Windows'
+        run: |
+          $env:VCPKG_ROOT = $env:LUNA_VCPKG_ROOT
+          & "$env:LUNA_VCPKG_ROOT\bootstrap-vcpkg.bat"
+
+      - name: Cache vcpkg state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+            ${{ env.LUNA_VCPKG_ROOT }}/downloads
+            ${{ github.workspace }}/build/vcpkg_installed
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**', 'vcpkg-triplets/**') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-
+
+      - name: Configure on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: VCPKG_ROOT="${LUNA_VCPKG_ROOT}" cmake --preset ${{ matrix.preset }} -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure on Windows
+        if: runner.os == 'Windows'
+        run: |
+          $env:VCPKG_ROOT = $env:LUNA_VCPKG_ROOT
+          cmake --preset ${{ matrix.preset }} -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: cmake --build build --config Release
+
+      - name: Build on Windows
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.executable }}
