@@ -9,6 +9,8 @@
 #include <skia/core/SkFontMgr.h>
 #include <skia/core/SkImage.h>
 #include <skia/core/SkPaint.h>
+#include <skia/core/SkPath.h>
+#include <skia/core/SkPathBuilder.h>
 #include <skia/core/SkSurface.h>
 #include <skia/core/SkTypeface.h>
 #include <skia/modules/skparagraph/include/FontCollection.h>
@@ -41,6 +43,17 @@ struct LParagraph {
         layout_width(width) {}
 };
 
+struct LPath {
+  static constexpr const char *MT = "luna.Path";
+  SkPathBuilder sk;
+
+  LPath() = default;
+  explicit LPath(SkPathFillType fill_type) : sk(fill_type) {}
+  explicit LPath(const SkPath &path) : sk(path) {}
+
+  SkPath snapshot() const { return sk.snapshot(); }
+};
+
 class LCanvas {
 public:
   struct LPaint {
@@ -57,7 +70,6 @@ public:
   };
 
 private:
-
   SkCanvas *sk_ = nullptr;
   sk_sp<SkSurface> surface_;
   sk_sp<SkFontMgr> font_mgr_;

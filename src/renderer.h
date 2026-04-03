@@ -58,9 +58,9 @@ private:
     sk_sp<SkImage> image_;
   };
 
-  class RegisterFontJob : public AsyncJob {
+  class LoadFontfaceJob : public AsyncJob {
   public:
-    explicit RegisterFontJob(sk_sp<SkFontMgr> font_mgr)
+    explicit LoadFontfaceJob(sk_sp<SkFontMgr> font_mgr)
         : font_mgr_(std::move(font_mgr)) {}
     void Invoke(lua_State *L) override;
     void Run() override;
@@ -70,7 +70,6 @@ private:
     sk_sp<SkFontMgr> font_mgr_;
     std::string path_;
     std::string family_;
-    SkFontStyle style_ = SkFontStyle();
     std::unique_ptr<SkStreamAsset> file_;
   };
 
@@ -145,7 +144,7 @@ public:
   const std::string &GetFatalError() const { return fatal_error_message_; }
 
   std::unique_ptr<AsyncJob> MakeLoadImageJob();
-  std::unique_ptr<AsyncJob> MakeRegisterFontJob();
+  std::unique_ptr<AsyncJob> MakeLoadFontfaceJob();
 };
 
 } // namespace luna

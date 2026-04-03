@@ -139,7 +139,7 @@ void Engine::RegisterBindings(lua_State *L) {
       [](lua_State *L) {
         Engine *e =
             static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(L, e, e->renderer_.MakeRegisterFontJob());
+        return L_StartAsyncJob(L, e, e->renderer_.MakeLoadFontfaceJob());
       },
       1);
   lua_setfield(L, -2, "load_fontface");
@@ -223,6 +223,10 @@ void Engine::Run(const std::string &entry_path) {
     }
 
     auto cpu_time = std::chrono::steady_clock::now() - last;
+    if (cpu_time < frame_time_) {
+      lua_gc(L_, LUA_GCSTEP, 1);
+    }
+    cpu_time = std::chrono::steady_clock::now() - last;
     if (cpu_time < frame_time_) {
       std::this_thread::sleep_for(frame_time_ - cpu_time);
     }

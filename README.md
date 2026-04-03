@@ -111,10 +111,79 @@ The `luna` module currently exposes helpers in a few main areas:
 The canvas API supports operations such as:
 
 - clearing, transforms, save/restore
-- rectangle drawing
+- rectangle drawing and clipping
+- path construction from commands or SVG path strings
+- path drawing and clipping
 - image drawing and snapshots
 - text measurement and drawing
 - paragraph creation, layout, measurement, and drawing
+
+### Canvas Interface
+
+`luna.window` is the window-backed canvas, and `luna.make_canvas(width, height)` creates an offscreen canvas with the same drawing API.
+
+Core canvas methods:
+
+- `canvas:clear(color)`
+- `canvas:save()` / `canvas:restore()`
+- `canvas:translate(dx, dy)`
+- `canvas:scale(sx, sy)`
+- `canvas:rotate(degrees)`
+- `canvas:snapshot()` returns an image for offscreen canvases
+
+Paint and font compilation:
+
+- `canvas:paint(opts)` accepts `{ color, anti_alias, style, stroke_width }`
+- `paint.style` may be `"fill"`, `"stroke"`, or `"stroke_and_fill"`
+- `canvas:font(opts)` accepts `{ size, family, style, weight, width, slant }`
+
+Drawing and clipping:
+
+- `canvas:draw_rect(x, y, w, h, paint)`
+- `canvas:draw_path(path, paint)`
+- `canvas:draw_image_rect(image, x, y, w, h, sx, sy, sw, sh, paint)`
+- `canvas:draw_text(text, x, y, font, paint)`
+- `canvas:draw_paragraph(paragraph, x, y)`
+- `canvas:clip_rect(x, y, w, h, op, anti_alias)`
+- `canvas:clip_path(path, op, anti_alias)`
+- `op` may be `"intersect"` or `"difference"`
+
+Path construction:
+
+- `canvas:path()` creates an empty path
+- `canvas:path("M0 0 L10 10 Z")` parses an SVG path string
+- `canvas:path({ svg = "...", fill_type = "even_odd" })` also supports table-based construction
+- `path:move_to(x, y)`, `path:line_to(x, y)`, `path:quad_to(x1, y1, x2, y2)`, `path:cubic_to(x1, y1, x2, y2, x3, y3)`, `path:conic_to(x1, y1, x2, y2, weight)`
+- `path:add_rect(x, y, w, h, direction)` and `path:add_oval(x, y, w, h, direction)`
+- `path:close()`, `path:reset()`, `path:set_fill_type(fill_type)`, `path:to_svg_string(relative)`
+- `fill_type` may be `"winding"`, `"even_odd"`, `"inverse_winding"`, or `"inverse_even_odd"`
+- `direction` may be `"cw"` or `"ccw"`
+
+Text and paragraphs:
+
+- `canvas:measure_text(text, font, paint)` returns metrics including bounds, ascent, descent, and line height
+- `canvas:paragraph(opts)` accepts `{ text, width, font, color, align, max_lines, ellipsis }`
+- `paragraph:measure()` returns layout metrics such as width, height, intrinsic widths, and line count
+- `align` may be `"left"`, `"center"`, or `"right"`
+
+Example:
+
+```lua
+local fill = luna.window:paint({
+  color = 0xFF7CC6FF,
+  style = "fill",
+  anti_alias = true,
+})
+
+local ring = luna.window:path({ fill_type = "even_odd" })
+ring:add_rect(80, 80, 220, 220)
+ring:add_oval(130, 130, 120, 120, "ccw")
+
+luna.window:save()
+luna.window:clip_rect(60, 60, 260, 260, "intersect", true)
+luna.window:draw_path(ring, fill)
+luna.window:restore()
+```
 
 ## Save Data and Files
 

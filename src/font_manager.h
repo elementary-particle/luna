@@ -13,8 +13,7 @@ namespace luna {
 sk_sp<SkFontMgr> MakeRuntimeFontManager();
 bool RegisterRuntimeFont(const sk_sp<SkFontMgr> &font_mgr,
                          std::unique_ptr<SkStreamAsset> stream,
-                         const char family_name[],
-                         const SkFontStyle &style);
+                         const char family_name[]);
 
 } // namespace luna
 

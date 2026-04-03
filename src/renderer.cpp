@@ -21,7 +21,6 @@
 #include <skia/gpu/vk/VulkanMutableTextureState.h>
 
 #include <algorithm>
-#include <cstring>
 #include <optional>
 #include <stdexcept>
 
@@ -38,147 +37,6 @@ MakeVulkanMemoryAllocator(VkInstance instance, VkPhysicalDevice physical_device,
                           PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr);
 
 namespace luna {
-
-namespace {
-
-int GetFontStyleNumber(lua_State *L,
-                       int index,
-                       const char *kind,
-                       const char *const names[],
-                       const int values[],
-                       int count) {
-  if (lua_isnoneornil(L, index)) {
-    return -1;
-  }
-  if (lua_isnumber(L, index)) {
-    return static_cast<int>(luaL_checkinteger(L, index));
-  }
-  const char *value = luaL_checkstring(L, index);
-  for (int i = 0; i < count; ++i) {
-    if (std::strcmp(value, names[i]) == 0) {
-      return values[i];
-    }
-  }
-  luaL_error(L, "register_font: invalid style.%s '%s'", kind, value);
-  return -1;
-}
-
-int GetFontWeight(lua_State *L, int index) {
-  static constexpr const char *kNames[] = {
-      "thin",      "extra_light", "light",      "normal", "medium",
-      "semi_bold", "bold",        "extra_bold", "black",
-  };
-  static constexpr int kValues[] = {
-      SkFontStyle::kThin_Weight,      SkFontStyle::kExtraLight_Weight,
-      SkFontStyle::kLight_Weight,     SkFontStyle::kNormal_Weight,
-      SkFontStyle::kMedium_Weight,    SkFontStyle::kSemiBold_Weight,
-      SkFontStyle::kBold_Weight,      SkFontStyle::kExtraBold_Weight,
-      SkFontStyle::kBlack_Weight,
-  };
-  return GetFontStyleNumber(L, index, "weight", kNames, kValues,
-                            std::size(kNames));
-}
-
-int GetFontWidth(lua_State *L, int index) {
-  static constexpr const char *kNames[] = {
-      "ultra_condensed", "extra_condensed", "condensed",
-      "semi_condensed",  "normal",          "semi_expanded",
-      "expanded",        "extra_expanded",  "ultra_expanded",
-  };
-  static constexpr int kValues[] = {
-      SkFontStyle::kUltraCondensed_Width, SkFontStyle::kExtraCondensed_Width,
-      SkFontStyle::kCondensed_Width,      SkFontStyle::kSemiCondensed_Width,
-      SkFontStyle::kNormal_Width,         SkFontStyle::kSemiExpanded_Width,
-      SkFontStyle::kExpanded_Width,       SkFontStyle::kExtraExpanded_Width,
-      SkFontStyle::kUltraExpanded_Width,
-  };
-  return GetFontStyleNumber(L, index, "width", kNames, kValues,
-                            std::size(kNames));
-}
-
-SkFontStyle::Slant GetFontSlant(lua_State *L, int index) {
-  static constexpr const char *kNames[] = {"upright", "italic", "oblique"};
-  static constexpr int kValues[] = {SkFontStyle::kUpright_Slant,
-                                    SkFontStyle::kItalic_Slant,
-                                    SkFontStyle::kOblique_Slant};
-  const int slant =
-      GetFontStyleNumber(L, index, "slant", kNames, kValues, std::size(kNames));
-  if (slant < 0) {
-    return SkFontStyle::kUpright_Slant;
-  }
-  return static_cast<SkFontStyle::Slant>(slant);
-}
-
-SkFontStyle ParseRegisterFontStyle(lua_State *L, int index) {
-  int weight = SkFontStyle::kNormal_Weight;
-  int width = SkFontStyle::kNormal_Width;
-  SkFontStyle::Slant slant = SkFontStyle::kUpright_Slant;
-
-  lua_getfield(L, index, "style");
-  const bool has_style_table = !lua_isnoneornil(L, -1);
-  if (has_style_table) {
-    luaL_checktype(L, -1, LUA_TTABLE);
-
-    lua_getfield(L, -1, "weight");
-    const int nested_weight = GetFontWeight(L, -1);
-    lua_pop(L, 1);
-    if (nested_weight >= 0) {
-      weight = nested_weight;
-    }
-
-    lua_getfield(L, -1, "width");
-    const int nested_width = GetFontWidth(L, -1);
-    lua_pop(L, 1);
-    if (nested_width >= 0) {
-      width = nested_width;
-    }
-
-    lua_getfield(L, -1, "slant");
-    slant = GetFontSlant(L, -1);
-    lua_pop(L, 1);
-  }
-  lua_pop(L, 1);
-
-  if (has_style_table) {
-    lua_getfield(L, index, "weight");
-    const bool has_flat_weight = !lua_isnoneornil(L, -1);
-    lua_pop(L, 1);
-    lua_getfield(L, index, "width");
-    const bool has_flat_width = !lua_isnoneornil(L, -1);
-    lua_pop(L, 1);
-    lua_getfield(L, index, "slant");
-    const bool has_flat_slant = !lua_isnoneornil(L, -1);
-    lua_pop(L, 1);
-    if (has_flat_weight || has_flat_width || has_flat_slant) {
-      luaL_error(L,
-                 "register_font: style cannot be combined with weight/width/slant");
-    }
-  } else {
-    lua_getfield(L, index, "weight");
-    const int flat_weight = GetFontWeight(L, -1);
-    lua_pop(L, 1);
-    if (flat_weight >= 0) {
-      weight = flat_weight;
-    }
-
-    lua_getfield(L, index, "width");
-    const int flat_width = GetFontWidth(L, -1);
-    lua_pop(L, 1);
-    if (flat_width >= 0) {
-      width = flat_width;
-    }
-
-    lua_getfield(L, index, "slant");
-    slant = GetFontSlant(L, -1);
-    lua_pop(L, 1);
-  }
-
-  return SkFontStyle(weight, width, slant);
-}
-
-} // namespace
-
-static constexpr const char *RENDERER_PTR_KEY = "luna.renderer_ptr";
 
 Renderer::Renderer() {}
 
@@ -230,11 +88,26 @@ bool Renderer::Init() {
 
 #if !defined(NDEBUG)
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL
-DebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT /*message_severity*/,
+DebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT message_severity,
               vk::DebugUtilsMessageTypeFlagsEXT /*message_type*/,
               const vk::DebugUtilsMessengerCallbackDataEXT *callback_data,
               void * /*user_data*/) {
-  log::Warn("vulkan", "{}", callback_data->pMessage);
+  log::Level level = log::Level::Warn;
+  switch (message_severity) {
+  case vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose:
+    level = log::Level::Debug;
+    break;
+  case vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo:
+    level = log::Level::Info;
+    break;
+  case vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning:
+    level = log::Level::Warn;
+    break;
+  case vk::DebugUtilsMessageSeverityFlagBitsEXT::eError:
+    level = log::Level::Error;
+    break;
+  }
+  log::Write(level, "vulkan", callback_data->pMessage);
   return VK_FALSE;
 }
 #endif
@@ -917,11 +790,11 @@ int Renderer::LoadImageJob::Finish(lua_State *L) {
   return 3;
 }
 
-std::unique_ptr<AsyncJob> Renderer::MakeRegisterFontJob() {
-  return std::make_unique<RegisterFontJob>(font_mgr_);
+std::unique_ptr<AsyncJob> Renderer::MakeLoadFontfaceJob() {
+  return std::make_unique<LoadFontfaceJob>(font_mgr_);
 }
 
-void Renderer::RegisterFontJob::Invoke(lua_State *L) {
+void Renderer::LoadFontfaceJob::Invoke(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
 
   if (!path || !*path)
@@ -937,8 +810,6 @@ void Renderer::RegisterFontJob::Invoke(lua_State *L) {
   family_ = family;
   lua_pop(L, 1);
 
-  style_ = ParseRegisterFontStyle(L, 2);
-
   path_ = path;
   file_ = SkStreamAsset::MakeFromFile(path);
   if (!file_) {
@@ -946,19 +817,15 @@ void Renderer::RegisterFontJob::Invoke(lua_State *L) {
   }
 }
 
-void Renderer::RegisterFontJob::Run() {
+void Renderer::LoadFontfaceJob::Run() {
   if (!font_mgr_ ||
-      !RegisterRuntimeFont(font_mgr_, std::move(file_), family_.c_str(),
-                           style_)) {
-    error_ = fmt::format("failed to register font '{}' as family '{}'",
-                         path_,
-                         family_);
+      !RegisterRuntimeFont(font_mgr_, std::move(file_), family_.c_str())) {
+    error_ = fmt::format(
+        "failed to register font '{}' as family '{}'", path_, family_);
   }
 }
 
-int Renderer::RegisterFontJob::Finish(lua_State *L) {
-  return 0;
-}
+int Renderer::LoadFontfaceJob::Finish(lua_State *L) { return 0; }
 
 int Renderer::L_PollSdlEvents(lua_State *L) {
   Renderer *r = static_cast<Renderer *>(lua_touserdata(L, lua_upvalueindex(1)));
@@ -1007,7 +874,14 @@ int Renderer::L_MakeCanvas(lua_State *L) {
 }
 
 void Renderer::RegisterBindings(lua_State *L) {
-  lua::NewType<LImage>(L);
+  if (lua::NewType<LImage>(L)) {
+    lua_pushcfunction(L, [](lua_State *L) {
+      LImage *image = lua::Check<LImage>(L, 1);
+      image->sk.reset();
+      return 0;
+    });
+    lua_setfield(L, -2, "destroy");
+  }
   lua_pop(L, 1);
   LCanvas::RegisterBindings(L);
 

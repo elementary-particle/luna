@@ -9,8 +9,7 @@
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg-ports",
-        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/vcpkg-triplets",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/vcpkg-triplets"
       }
     },
     {
@@ -42,7 +41,8 @@
         "VCPKG_LIBRARY_LINKAGE": "dynamic",
         "VCPKG_HOST_TRIPLET": "x64-linux-clang-dynamic",
         "VCPKG_TARGET_TRIPLET": "x64-linux-clang-dynamic",
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     },
     {

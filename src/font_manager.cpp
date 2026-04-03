@@ -9,11 +9,13 @@
 #include <skia/core/SkData.h>
 #include <skia/core/SkFontArguments.h>
 #include <skia/core/SkFontMgr.h>
+#include <skia/core/SkFontScanner.h>
 #include <skia/core/SkFontStyle.h>
 #include <skia/core/SkStream.h>
 #include <skia/core/SkString.h>
 #include <skia/core/SkTypeface.h>
 #include <skia/ports/SkFontMgr_empty.h>
+#include <skia/ports/SkFontScanner_FreeType.h>
 
 namespace luna {
 namespace {
@@ -61,16 +63,68 @@ private:
 
 class RuntimeFontManager final : public SkFontMgr {
 public:
-  RuntimeFontManager() : loader_(SkFontMgr_New_Custom_Empty()) {}
+  RuntimeFontManager()
+      : loader_(SkFontMgr_New_Custom_Empty()),
+        scanner_(SkFontScanner_Make_FreeType()) {}
 
   bool RegisterFont(std::unique_ptr<SkStreamAsset> stream,
-                    const char family_name[], const SkFontStyle &style) {
-    if (!loader_ || !stream || !family_name || !*family_name) {
+                    const char family_name[]) {
+    if (!loader_ || !scanner_ || !stream || !family_name || !*family_name) {
       return false;
     }
 
-    return RegisterTypeface(
-        loader_->makeFromStream(std::move(stream)), family_name, style);
+    int num_faces = 0;
+    if (!scanner_->scanFile(stream.get(), &num_faces) || num_faces <= 0) {
+      return false;
+    }
+
+    bool registered_any = false;
+    for (int face_index = 0; face_index < num_faces; ++face_index) {
+      int num_instances = 0;
+      if (!scanner_->scanFace(stream.get(), face_index, &num_instances)) {
+        continue;
+      }
+
+      for (int instance_index = 0; instance_index <= num_instances;
+           ++instance_index) {
+        SkString real_name;
+        SkFontStyle style;
+        bool is_fixed_pitch = false;
+        SkFontScanner::VariationPosition position;
+        if (!scanner_->scanInstance(stream.get(),
+                                    face_index,
+                                    instance_index,
+                                    &real_name,
+                                    &style,
+                                    &is_fixed_pitch,
+                                    nullptr,
+                                    &position)) {
+          continue;
+        }
+
+        std::unique_ptr<SkStreamAsset> instance_stream = stream->duplicate();
+        if (!instance_stream) {
+          continue;
+        }
+
+        SkFontArguments args;
+        args.setCollectionIndex(face_index);
+        if (!position.empty()) {
+          args.setVariationDesignPosition(
+              {position.data(), static_cast<int>(position.size())});
+        }
+
+        sk_sp<SkTypeface> typeface =
+            scanner_->MakeFromStream(std::move(instance_stream), args);
+        if (!typeface) {
+          continue;
+        }
+
+        registered_any |= RegisterTypeface(typeface, family_name, style);
+      }
+    }
+
+    return registered_any;
   }
 
 protected:
@@ -136,11 +190,7 @@ protected:
     if (!loader_) {
       return nullptr;
     }
-    sk_sp<SkTypeface> typeface =
-        loader_->makeFromData(std::move(data), ttc_index);
-    RegisterTypeface(
-        typeface, nullptr, typeface ? typeface->fontStyle() : SkFontStyle());
-    return typeface;
+    return loader_->makeFromData(std::move(data), ttc_index);
   }
 
   sk_sp<SkTypeface> onMakeFromStreamIndex(std::unique_ptr<SkStreamAsset> stream,
@@ -148,11 +198,7 @@ protected:
     if (!loader_) {
       return nullptr;
     }
-    sk_sp<SkTypeface> typeface =
-        loader_->makeFromStream(std::move(stream), ttc_index);
-    RegisterTypeface(
-        typeface, nullptr, typeface ? typeface->fontStyle() : SkFontStyle());
-    return typeface;
+    return loader_->makeFromStream(std::move(stream), ttc_index);
   }
 
   sk_sp<SkTypeface>
@@ -161,11 +207,7 @@ protected:
     if (!loader_) {
       return nullptr;
     }
-    sk_sp<SkTypeface> typeface =
-        loader_->makeFromStream(std::move(stream), args);
-    RegisterTypeface(
-        typeface, nullptr, typeface ? typeface->fontStyle() : SkFontStyle());
-    return typeface;
+    return loader_->makeFromStream(std::move(stream), args);
   }
 
   sk_sp<SkTypeface> onMakeFromFile(const char path[],
@@ -173,10 +215,7 @@ protected:
     if (!loader_) {
       return nullptr;
     }
-    sk_sp<SkTypeface> typeface = loader_->makeFromFile(path, ttc_index);
-    RegisterTypeface(
-        typeface, nullptr, typeface ? typeface->fontStyle() : SkFontStyle());
-    return typeface;
+    return loader_->makeFromFile(path, ttc_index);
   }
 
   sk_sp<SkTypeface> onLegacyMakeTypeface(const char family_name[],
@@ -237,6 +276,7 @@ private:
   };
 
   sk_sp<SkFontMgr> loader_;
+  std::unique_ptr<SkFontScanner> scanner_;
   mutable std::mutex mutex_;
   mutable std::vector<SkString> family_names_;
   mutable std::unordered_map<std::string, FamilyEntry> families_;
@@ -250,12 +290,12 @@ sk_sp<SkFontMgr> MakeRuntimeFontManager() {
 
 bool RegisterRuntimeFont(const sk_sp<SkFontMgr> &font_mgr,
                          std::unique_ptr<SkStreamAsset> stream,
-                         const char family_name[], const SkFontStyle &style) {
+                         const char family_name[]) {
   if (!font_mgr) {
     return false;
   }
   return static_cast<RuntimeFontManager *>(font_mgr.get())
-      ->RegisterFont(std::move(stream), family_name, style);
+      ->RegisterFont(std::move(stream), family_name);
 }
 
 } // namespace luna
