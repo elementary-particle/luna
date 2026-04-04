@@ -126,6 +126,7 @@ Core canvas methods:
 
 - `canvas:clear(color)`
 - `canvas:save()` / `canvas:restore()`
+- `canvas:save_layer(paint)` saves into an isolated layer, optionally with a compositing paint
 - `canvas:translate(dx, dy)`
 - `canvas:scale(sx, sy)`
 - `canvas:rotate(degrees)`
@@ -133,8 +134,9 @@ Core canvas methods:
 
 Paint and font compilation:
 
-- `canvas:paint(opts)` accepts `{ color, anti_alias, style, stroke_width }`
+- `canvas:paint(opts)` accepts `{ color, anti_alias, style, stroke_width, blend_mode }`
 - `paint.style` may be `"fill"`, `"stroke"`, or `"stroke_and_fill"`
+- `paint.blend_mode` may be values such as `"src_over"`, `"multiply"`, `"screen"`, `"overlay"`, `"difference"`, or `"color"`
 - `canvas:font(opts)` accepts `{ size, family, style, weight, width, slant }`
 
 Drawing and clipping:

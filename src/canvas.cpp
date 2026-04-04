@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include <skia/core/SkImage.h>
+#include <skia/core/SkBlendMode.h>
 #include <skia/core/SkPaint.h>
 #include <skia/core/SkRRect.h>
 #include <skia/core/SkRect.h>
@@ -18,6 +19,10 @@ namespace {
 
 SkPaint::Style CheckPaintStyle(lua_State *L, int idx) {
   return static_cast<SkPaint::Style>(luaL_checkinteger(L, idx));
+}
+
+SkBlendMode CheckBlendMode(lua_State *L, int idx) {
+  return static_cast<SkBlendMode>(luaL_checkinteger(L, idx));
 }
 
 SkClipOp CheckClipOp(lua_State *L, int idx) {
@@ -89,6 +94,7 @@ return function(canvas_mt)
   local raw_measure_text = assert(canvas_mt._measure_text)
   local raw_clip_rect = assert(canvas_mt._clip_rect)
   local raw_clip_round_rect = assert(canvas_mt._clip_round_rect)
+  local raw_save_layer = assert(canvas_mt._save_layer)
 
   local constants = assert(canvas_mt._constants)
 
@@ -104,8 +110,41 @@ return function(canvas_mt)
     intersect = constants.clip_op.intersect,
   }
 
+  local blend_mode_ = {
+    clear = constants.blend_mode.clear,
+    src = constants.blend_mode.src,
+    dst = constants.blend_mode.dst,
+    src_over = constants.blend_mode.src_over,
+    dst_over = constants.blend_mode.dst_over,
+    src_in = constants.blend_mode.src_in,
+    dst_in = constants.blend_mode.dst_in,
+    src_out = constants.blend_mode.src_out,
+    dst_out = constants.blend_mode.dst_out,
+    src_atop = constants.blend_mode.src_atop,
+    dst_atop = constants.blend_mode.dst_atop,
+    xor = constants.blend_mode.xor,
+    plus = constants.blend_mode.plus,
+    modulate = constants.blend_mode.modulate,
+    screen = constants.blend_mode.screen,
+    overlay = constants.blend_mode.overlay,
+    darken = constants.blend_mode.darken,
+    lighten = constants.blend_mode.lighten,
+    color_dodge = constants.blend_mode.color_dodge,
+    color_burn = constants.blend_mode.color_burn,
+    hard_light = constants.blend_mode.hard_light,
+    soft_light = constants.blend_mode.soft_light,
+    difference = constants.blend_mode.difference,
+    exclusion = constants.blend_mode.exclusion,
+    multiply = constants.blend_mode.multiply,
+    hue = constants.blend_mode.hue,
+    saturation = constants.blend_mode.saturation,
+    color = constants.blend_mode.color,
+    luminosity = constants.blend_mode.luminosity,
+  }
+
   local allowed_paint_keys = {
     anti_alias = true,
+    blend_mode = true,
     color = true,
     stroke_width = true,
     style = true,
@@ -158,6 +197,24 @@ return function(canvas_mt)
     local mapped = clip_op_[op]
     if mapped == nil then
       error(string.format("invalid clip op '%s'", op), level or 3)
+    end
+    return mapped
+  end
+
+  local function normalize_blend_mode(mode, level)
+    if mode == nil then
+      return nil
+    end
+    if type(mode) == "number" then
+      return mode
+    end
+    if type(mode) ~= "string" then
+      error("paint.blend_mode must be a number or string", level or 3)
+    end
+
+    local mapped = blend_mode_[mode]
+    if mapped == nil then
+      error(string.format("invalid paint.blend_mode '%s'", mode), level or 3)
     end
     return mapped
   end
@@ -223,7 +280,8 @@ return function(canvas_mt)
       paint.color,
       paint.anti_alias,
       normalize_paint_style(paint.style, (level or 3) + 1),
-      paint.stroke_width
+      paint.stroke_width,
+      normalize_blend_mode(paint.blend_mode, (level or 3) + 1)
     )
   end
 
@@ -312,6 +370,10 @@ return function(canvas_mt)
   function canvas_mt:clip_rrect(x, y, w, h, rx, ry, op, anti_alias)
     return raw_clip_round_rect(self, x, y, w, h, rx, ry, normalize_clip_op(op, 3), anti_alias)
   end
+
+  function canvas_mt:save_layer(paint)
+    return raw_save_layer(self, compile_paint(self, paint, 3))
+  end
 end
 )";
 
@@ -355,6 +417,17 @@ void LCanvas::RegisterBindings(lua_State *L) {
       return 0;
     });
     lua_setfield(L, -2, "save");
+
+    lua::PushFunction(L, [](lua_State *L) {
+      LCanvas *canvas = lua::Check<LCanvas>(L, 1);
+      LPaint *paint = nullptr;
+      if (!lua_isnoneornil(L, 2)) {
+        paint = lua::Check<LPaint>(L, 2);
+      }
+      canvas->sk_->saveLayer(nullptr, paint ? &paint->sk : nullptr);
+      return 0;
+    });
+    lua_setfield(L, -2, "_save_layer");
 
     lua::PushFunction(L, [](lua_State *L) {
       LCanvas *canvas = lua::Check<LCanvas>(L, 1);
@@ -449,6 +522,67 @@ void LCanvas::RegisterBindings(lua_State *L) {
     lua_setfield(L, -2, "clip_op");
 
     lua_newtable(L);
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kClear));
+    lua_setfield(L, -2, "clear");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kSrc));
+    lua_setfield(L, -2, "src");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kDst));
+    lua_setfield(L, -2, "dst");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kSrcOver));
+    lua_setfield(L, -2, "src_over");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kDstOver));
+    lua_setfield(L, -2, "dst_over");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kSrcIn));
+    lua_setfield(L, -2, "src_in");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kDstIn));
+    lua_setfield(L, -2, "dst_in");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kSrcOut));
+    lua_setfield(L, -2, "src_out");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kDstOut));
+    lua_setfield(L, -2, "dst_out");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kSrcATop));
+    lua_setfield(L, -2, "src_atop");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kDstATop));
+    lua_setfield(L, -2, "dst_atop");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kXor));
+    lua_setfield(L, -2, "xor");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kPlus));
+    lua_setfield(L, -2, "plus");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kModulate));
+    lua_setfield(L, -2, "modulate");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kScreen));
+    lua_setfield(L, -2, "screen");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kOverlay));
+    lua_setfield(L, -2, "overlay");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kDarken));
+    lua_setfield(L, -2, "darken");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kLighten));
+    lua_setfield(L, -2, "lighten");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kColorDodge));
+    lua_setfield(L, -2, "color_dodge");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kColorBurn));
+    lua_setfield(L, -2, "color_burn");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kHardLight));
+    lua_setfield(L, -2, "hard_light");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kSoftLight));
+    lua_setfield(L, -2, "soft_light");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kDifference));
+    lua_setfield(L, -2, "difference");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kExclusion));
+    lua_setfield(L, -2, "exclusion");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kMultiply));
+    lua_setfield(L, -2, "multiply");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kHue));
+    lua_setfield(L, -2, "hue");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kSaturation));
+    lua_setfield(L, -2, "saturation");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kColor));
+    lua_setfield(L, -2, "color");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kLuminosity));
+    lua_setfield(L, -2, "luminosity");
+    lua_setfield(L, -2, "blend_mode");
+
+    lua_newtable(L);
     lua_pushinteger(L, static_cast<lua_Integer>(SkPathDirection::kCW));
     lua_setfield(L, -2, "cw");
     lua_pushinteger(L, static_cast<lua_Integer>(SkPathDirection::kCCW));
@@ -536,6 +670,9 @@ void LCanvas::RegisterBindings(lua_State *L) {
       if (!lua_isnoneornil(L, 5)) {
         paint->sk.setStrokeWidth(
             SkFloatToScalar(static_cast<float>(luaL_checknumber(L, 5))));
+      }
+      if (!lua_isnoneornil(L, 6)) {
+        paint->sk.setBlendMode(CheckBlendMode(L, 6));
       }
       return 1;
     });
