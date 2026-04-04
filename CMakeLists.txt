@@ -19,6 +19,8 @@ add_executable(
   src/log.cpp
   src/mixer.cpp
   src/canvas.cpp
+  src/canvas_paragraph.cpp
+  src/canvas_path.cpp
   src/renderer.cpp
   src/vfs.cpp
   src/vma.cpp

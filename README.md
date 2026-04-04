@@ -140,11 +140,13 @@ Paint and font compilation:
 Drawing and clipping:
 
 - `canvas:draw_rect(x, y, w, h, paint)`
+- `canvas:draw_rrect(x, y, w, h, rx, ry, paint)`
 - `canvas:draw_path(path, paint)`
 - `canvas:draw_image_rect(image, x, y, w, h, sx, sy, sw, sh, paint)`
 - `canvas:draw_text(text, x, y, font, paint)`
 - `canvas:draw_paragraph(paragraph, x, y)`
 - `canvas:clip_rect(x, y, w, h, op, anti_alias)`
+- `canvas:clip_rrect(x, y, w, h, rx, ry, op, anti_alias)`
 - `canvas:clip_path(path, op, anti_alias)`
 - `op` may be `"intersect"` or `"difference"`
 
@@ -154,7 +156,7 @@ Path construction:
 - `canvas:path("M0 0 L10 10 Z")` parses an SVG path string
 - `canvas:path({ svg = "...", fill_type = "even_odd" })` also supports table-based construction
 - `path:move_to(x, y)`, `path:line_to(x, y)`, `path:quad_to(x1, y1, x2, y2)`, `path:cubic_to(x1, y1, x2, y2, x3, y3)`, `path:conic_to(x1, y1, x2, y2, weight)`
-- `path:add_rect(x, y, w, h, direction)` and `path:add_oval(x, y, w, h, direction)`
+- `path:add_rect(x, y, w, h, direction)`, `path:add_rrect(x, y, w, h, rx, ry, direction)`, and `path:add_oval(x, y, w, h, direction)`
 - `path:close()`, `path:reset()`, `path:set_fill_type(fill_type)`, `path:to_svg_string(relative)`
 - `fill_type` may be `"winding"`, `"even_odd"`, `"inverse_winding"`, or `"inverse_even_odd"`
 - `direction` may be `"cw"` or `"ccw"`

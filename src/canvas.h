@@ -74,8 +74,6 @@ private:
   sk_sp<SkSurface> surface_;
   sk_sp<SkFontMgr> font_mgr_;
 
-  static void RegisterLuaHelpers(lua_State *L);
-
 public:
   static constexpr const char *MT = "luna.Canvas";
 
@@ -83,6 +81,8 @@ public:
     surface_.reset();
     sk_ = sk;
   }
+
+  SkCanvas *sk() const { return sk_; }
 
   void set_font_manager(sk_sp<SkFontMgr> font_mgr) { font_mgr_ = std::move(font_mgr); }
   sk_sp<SkFontMgr> font_mgr() const { return font_mgr_; }
