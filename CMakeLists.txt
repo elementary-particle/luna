@@ -21,6 +21,7 @@ add_executable(
   src/canvas.cpp
   src/canvas_paragraph.cpp
   src/canvas_path.cpp
+  src/canvas_shader.cpp
   src/renderer.cpp
   src/vfs.cpp
   src/vma.cpp

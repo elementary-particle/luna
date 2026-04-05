@@ -9,6 +9,7 @@
 #include <skia/core/SkRect.h>
 #include <skia/core/SkSamplingOptions.h>
 #include <skia/core/SkString.h>
+#include <skia/core/SkTileMode.h>
 #include <skia/core/SkTypeface.h>
 #include <skia/core/SkTypes.h>
 #include <skia/modules/skparagraph/include/Metrics.h>
@@ -146,6 +147,7 @@ return function(canvas_mt)
     anti_alias = true,
     blend_mode = true,
     color = true,
+    shader = true,
     stroke_width = true,
     style = true,
   }
@@ -281,7 +283,8 @@ return function(canvas_mt)
       paint.anti_alias,
       normalize_paint_style(paint.style, (level or 3) + 1),
       paint.stroke_width,
-      normalize_blend_mode(paint.blend_mode, (level or 3) + 1)
+      normalize_blend_mode(paint.blend_mode, (level or 3) + 1),
+      self:shader(paint.shader)
     )
   end
 
@@ -401,6 +404,7 @@ void LCanvas::RegisterBindings(lua_State *L) {
   lua_pop(L, 1);
   canvas::RegisterPathBindings(L);
   canvas::RegisterParagraphBindings(L);
+  canvas::RegisterShaderBindings(L);
 
   if (lua::NewType<LCanvas>(L)) {
     lua::PushFunction(L, [](lua_State *L) {
@@ -520,6 +524,17 @@ void LCanvas::RegisterBindings(lua_State *L) {
     lua_pushinteger(L, static_cast<lua_Integer>(SkClipOp::kIntersect));
     lua_setfield(L, -2, "intersect");
     lua_setfield(L, -2, "clip_op");
+
+    lua_newtable(L);
+    lua_pushinteger(L, static_cast<lua_Integer>(SkTileMode::kClamp));
+    lua_setfield(L, -2, "clamp");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkTileMode::kRepeat));
+    lua_setfield(L, -2, "repeat");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkTileMode::kMirror));
+    lua_setfield(L, -2, "mirror");
+    lua_pushinteger(L, static_cast<lua_Integer>(SkTileMode::kDecal));
+    lua_setfield(L, -2, "decal");
+    lua_setfield(L, -2, "tile_mode");
 
     lua_newtable(L);
     lua_pushinteger(L, static_cast<lua_Integer>(SkBlendMode::kClear));
@@ -673,6 +688,10 @@ void LCanvas::RegisterBindings(lua_State *L) {
       }
       if (!lua_isnoneornil(L, 6)) {
         paint->sk.setBlendMode(CheckBlendMode(L, 6));
+      }
+      if (!lua_isnoneornil(L, 7)) {
+        LShader *shader = lua::Check<LShader>(L, 7);
+        paint->sk.setShader(shader->sk);
       }
       return 1;
     });
@@ -905,9 +924,11 @@ void LCanvas::RegisterBindings(lua_State *L) {
 
     canvas::RegisterPathCanvasMethods(L);
     canvas::RegisterParagraphCanvasMethods(L);
+    canvas::RegisterShaderCanvasMethods(L);
     canvas::RegisterCanvasLuaHelpers(L);
     canvas::RegisterPathLuaHelpers(L);
     canvas::RegisterParagraphLuaHelpers(L);
+    canvas::RegisterShaderLuaHelpers(L);
   }
   lua_pop(L, 1);
 }

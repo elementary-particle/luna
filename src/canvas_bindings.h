@@ -13,6 +13,10 @@ void RegisterParagraphBindings(lua_State *L);
 void RegisterParagraphCanvasMethods(lua_State *L);
 void RegisterParagraphLuaHelpers(lua_State *L);
 
+void RegisterShaderBindings(lua_State *L);
+void RegisterShaderCanvasMethods(lua_State *L);
+void RegisterShaderLuaHelpers(lua_State *L);
+
 void RegisterCanvasLuaHelpers(lua_State *L);
 
 } // namespace luna::canvas

@@ -134,9 +134,10 @@ Core canvas methods:
 
 Paint and font compilation:
 
-- `canvas:paint(opts)` accepts `{ color, anti_alias, style, stroke_width, blend_mode }`
+- `canvas:paint(opts)` accepts `{ color, anti_alias, style, stroke_width, blend_mode, shader }`
 - `paint.style` may be `"fill"`, `"stroke"`, or `"stroke_and_fill"`
 - `paint.blend_mode` may be values such as `"src_over"`, `"multiply"`, `"screen"`, `"overlay"`, `"difference"`, or `"color"`
+- `paint.shader` accepts a compiled shader or a shader table
 - `canvas:font(opts)` accepts `{ size, family, style, weight, width, slant }`
 
 Drawing and clipping:
@@ -162,6 +163,14 @@ Path construction:
 - `path:close()`, `path:reset()`, `path:set_fill_type(fill_type)`, `path:to_svg_string(relative)`
 - `fill_type` may be `"winding"`, `"even_odd"`, `"inverse_winding"`, or `"inverse_even_odd"`
 - `direction` may be `"cw"` or `"ccw"`
+
+Shaders:
+
+- `canvas:shader({ type = "linear_gradient", x0, y0, x1, y1, colors, positions, tile_mode })`
+- `canvas:shader({ type = "radial_gradient", cx, cy, radius, colors, positions, tile_mode })`
+- `colors` must contain at least 2 packed colors
+- `positions` is optional and must match `colors` length when provided
+- `tile_mode` may be `"clamp"`, `"repeat"`, `"mirror"`, or `"decal"`
 
 Text and paragraphs:
 

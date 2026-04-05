@@ -12,6 +12,7 @@
 #include <skia/core/SkPath.h>
 #include <skia/core/SkPathBuilder.h>
 #include <skia/core/SkSurface.h>
+#include <skia/core/SkShader.h>
 #include <skia/core/SkTypeface.h>
 #include <skia/modules/skparagraph/include/FontCollection.h>
 #include <skia/modules/skparagraph/include/Paragraph.h>
@@ -52,6 +53,14 @@ struct LPath {
   explicit LPath(const SkPath &path) : sk(path) {}
 
   SkPath snapshot() const { return sk.snapshot(); }
+};
+
+struct LShader {
+  static constexpr const char *MT = "luna.Shader";
+  sk_sp<SkShader> sk;
+
+  LShader() = default;
+  explicit LShader(sk_sp<SkShader> shader) : sk(std::move(shader)) {}
 };
 
 class LCanvas {
