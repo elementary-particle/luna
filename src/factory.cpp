@@ -2,6 +2,9 @@
 
 #include <stdexcept>
 
+#include <fmt/format.h>
+#include <tracy/Tracy.hpp>
+
 namespace luna {
 
 Factory::~Factory() { Shutdown(); }
@@ -11,7 +14,7 @@ void Factory::Start() {
     shutting_down_ = false;
     for (int i = 0; i < WORKER_COUNT; ++i) {
       workers_.emplace_back(
-          [this](std::stop_token stop_token) { WorkerMain(stop_token); });
+          [this, i](std::stop_token stop_token) { WorkerMain(stop_token, i); });
     }
   }
 }
@@ -51,7 +54,9 @@ void Factory::Shutdown() {
   workers_.clear();
 }
 
-void Factory::WorkerMain(std::stop_token stop_token) {
+void Factory::WorkerMain(std::stop_token stop_token, int i) {
+  std::string thread_name(fmt::format("Worker {}", i));
+  tracy::SetThreadName(thread_name.c_str());
   while (true) {
     CompletedJob job;
 

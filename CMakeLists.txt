@@ -25,9 +25,13 @@ add_executable(
   src/renderer.cpp
   src/vfs.cpp
   src/vma.cpp
+  vendor/tracy/TracyClient.cpp
 )
 
 set_target_properties(luna PROPERTIES OUTPUT_NAME "luna")
+
+target_compile_definitions(luna PRIVATE TRACY_ENABLE)
+target_include_directories(luna PRIVATE vendor/tracy)
 
 find_package(fmt CONFIG REQUIRED)
 find_package(VulkanHeaders CONFIG REQUIRED)

@@ -76,7 +76,7 @@ private:
   std::vector<std::jthread> workers_;
   bool shutting_down_ = false;
 
-  void WorkerMain(std::stop_token stop_token);
+  void WorkerMain(std::stop_token stop_token, int i);
 };
 
 } // namespace luna

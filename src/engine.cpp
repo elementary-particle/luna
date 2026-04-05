@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <fmt/core.h>
+#include <tracy/Tracy.hpp>
 
 #include "factory.h"
 #include "log.h"
@@ -30,6 +31,7 @@ Engine::Engine() = default;
 
 bool Engine::Init() {
   log::Info("engine", "initializing");
+  tracy::SetThreadName("Engine");
   factory_.Start();
   log::Debug("engine", "worker factory started");
 
@@ -202,9 +204,8 @@ void Engine::Run(const std::string &entry_path) {
   while (alive_task_count_ > 0) {
     if (!renderer_.BeginFrame(L_)) {
       log::Error("engine", "renderer failed: {}",
-                 renderer_.GetFatalError().empty()
-                     ? "unknown renderer error"
-                     : renderer_.GetFatalError());
+                 renderer_.GetFatalError().empty() ? "unknown renderer error"
+                                                   : renderer_.GetFatalError());
       renderer_.Fini();
       alive_task_count_ = 0;
       break;
@@ -214,9 +215,8 @@ void Engine::Run(const std::string &entry_path) {
     Tick();
     if (!renderer_.EndFrame()) {
       log::Error("engine", "renderer failed: {}",
-                 renderer_.GetFatalError().empty()
-                     ? "unknown renderer error"
-                     : renderer_.GetFatalError());
+                 renderer_.GetFatalError().empty() ? "unknown renderer error"
+                                                   : renderer_.GetFatalError());
       renderer_.Fini();
       alive_task_count_ = 0;
       break;
@@ -224,6 +224,7 @@ void Engine::Run(const std::string &entry_path) {
 
     auto cpu_time = std::chrono::steady_clock::now() - last;
     if (cpu_time < frame_time_) {
+      ZoneScopedN("Lua GC");
       lua_gc(L_, LUA_GCSTEP, 1);
     }
     cpu_time = std::chrono::steady_clock::now() - last;
@@ -235,6 +236,8 @@ void Engine::Run(const std::string &entry_path) {
     const std::chrono::duration<double> elapsed = now - last;
     AdvanceTime(elapsed.count());
     last = now;
+
+    FrameMark;
   }
 
   log::Info("engine", "main loop exited");
@@ -280,6 +283,7 @@ void Engine::SignalExpiredTimers() {
 }
 
 void Engine::Tick() {
+  ZoneScopedN("Lua");
   for (Task *t : next_frame_tasks_) {
     tasks_.push_back(t);
   }
@@ -552,8 +556,7 @@ int Engine::L_SetWindowSize(lua_State *L) {
   }
   if (e->alive_task_count_ > 0) {
     return luaL_error(
-        L,
-        "set_window_size: must be called before starting any coroutines");
+        L, "set_window_size: must be called before starting any coroutines");
   }
   if (!e->renderer_.SetWindowSize(width, height)) {
     return luaL_error(L, "set_window_size: failed to resize window: %s",

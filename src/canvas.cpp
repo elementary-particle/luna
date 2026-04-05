@@ -2,8 +2,8 @@
 
 #include <cstring>
 
-#include <skia/core/SkImage.h>
 #include <skia/core/SkBlendMode.h>
+#include <skia/core/SkImage.h>
 #include <skia/core/SkPaint.h>
 #include <skia/core/SkRRect.h>
 #include <skia/core/SkRect.h>
@@ -31,8 +31,7 @@ SkClipOp CheckClipOp(lua_State *L, int idx) {
 }
 
 void PushTextMetricsTable(lua_State *L, SkScalar advance_width,
-                          const SkRect &bounds,
-                          const SkFontMetrics &metrics) {
+                          const SkRect &bounds, const SkFontMetrics &metrics) {
   lua_createtable(L, 0, 9);
   lua_pushnumber(L, advance_width);
   lua_setfield(L, -2, "advance_width");
@@ -380,8 +379,9 @@ return function(canvas_mt)
 end
 )";
 
-  if (luaL_loadbuffer(L, CANVAS_HELPERS, std::strlen(CANVAS_HELPERS),
-                      "canvas_helpers") != 0) {
+  if (luaL_loadbuffer(
+          L, CANVAS_HELPERS, std::strlen(CANVAS_HELPERS), "canvas_helpers") !=
+      0) {
     lua_error(L);
   }
 
@@ -643,8 +643,8 @@ void LCanvas::RegisterBindings(lua_State *L) {
     lua_setfield(L, -2, "semi_condensed");
     lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kNormal_Width));
     lua_setfield(L, -2, "normal");
-    lua_pushinteger(
-        L, static_cast<lua_Integer>(SkFontStyle::kSemiExpanded_Width));
+    lua_pushinteger(L,
+                    static_cast<lua_Integer>(SkFontStyle::kSemiExpanded_Width));
     lua_setfield(L, -2, "semi_expanded");
     lua_pushinteger(L, static_cast<lua_Integer>(SkFontStyle::kExpanded_Width));
     lua_setfield(L, -2, "expanded");
@@ -804,7 +804,7 @@ void LCanvas::RegisterBindings(lua_State *L) {
                            SkFloatToScalar(h)),
           SkSamplingOptions(),
           paint ? &paint->sk : &default_paint,
-          SkCanvas::SrcRectConstraint::kStrict_SrcRectConstraint);
+          SkCanvas::SrcRectConstraint::kFast_SrcRectConstraint);
       return 0;
     });
     lua_setfield(L, -2, "_draw_image_rect");
@@ -823,8 +823,7 @@ void LCanvas::RegisterBindings(lua_State *L) {
       }
 
       SkPaint default_paint;
-      const SkFont sk_font =
-          ResolveFont(L, canvas, *font, "draw_text");
+      const SkFont sk_font = ResolveFont(L, canvas, *font, "draw_text");
       canvas->sk_->drawSimpleText(text,
                                   text_len,
                                   SkTextEncoding::kUTF8,
@@ -849,8 +848,7 @@ void LCanvas::RegisterBindings(lua_State *L) {
 
       SkRect bounds = SkRect::MakeEmpty();
       SkFontMetrics metrics;
-      const SkFont sk_font =
-          ResolveFont(L, canvas, *font, "measure_text");
+      const SkFont sk_font = ResolveFont(L, canvas, *font, "measure_text");
       const SkScalar advance_width =
           sk_font.measureText(text,
                               text_len,

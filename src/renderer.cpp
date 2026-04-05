@@ -5,6 +5,10 @@
 #define VMA_VULKAN_VERSION 1003000
 #include <vk_mem_alloc.h>
 
+#include <algorithm>
+#include <optional>
+#include <stdexcept>
+
 #include <fmt/format.h>
 #include <skia/codec/SkCodec.h>
 #include <skia/core/SkCanvas.h>
@@ -19,10 +23,7 @@
 #include <skia/gpu/vk/VulkanBackendContext.h>
 #include <skia/gpu/vk/VulkanMemoryAllocator.h>
 #include <skia/gpu/vk/VulkanMutableTextureState.h>
-
-#include <algorithm>
-#include <optional>
-#include <stdexcept>
+#include <tracy/Tracy.hpp>
 
 #include "canvas.h"
 #include "font_manager.h"
@@ -450,6 +451,7 @@ void Renderer::Fini() {
 }
 
 bool Renderer::BeginFrame(lua_State *L) {
+  ZoneScopedN("BeginFrame");
   frame_active_ = false;
   PumpSdlEvents();
 
@@ -488,6 +490,7 @@ bool Renderer::BeginFrame(lua_State *L) {
 }
 
 bool Renderer::EndFrame() {
+  ZoneScopedN("EndFrame");
   if (!frame_active_) {
     return !fatal_error_;
   }
@@ -590,9 +593,15 @@ bool Renderer::EndFrame() {
     delete callback;
   };
   // Allow 1 frame in flight.
-  sk_context_->submit(skgpu::graphite::SyncToCpu::kYes);
-  sk_context_->insertRecording(recording_info);
-  sk_context_->submit();
+  {
+    ZoneScopedN("WaitQueueIdle");
+    sk_context_->submit(skgpu::graphite::SyncToCpu::kYes);
+  }
+  {
+    ZoneScopedN("SubmitRender");
+    sk_context_->insertRecording(recording_info);
+    sk_context_->submit();
+  }
 
   vk::PresentInfoKHR present_info{
       {rendered_sems_[image_index_]}, {swapchain_}, {image_index_}};
@@ -772,15 +781,23 @@ void Renderer::LoadImageJob::Invoke(lua_State *L) {
 }
 
 void Renderer::LoadImageJob::Run() {
+  ZoneScopedN("LoadImage");
   std::unique_ptr<SkCodec> codec = SkCodec::MakeFromStream(std::move(file_));
   if (!codec) {
     error_ = fmt::format("unrecognized image format: {}", path_);
     return;
   }
-  image_ = SkCodecs::DeferredImage(std::move(codec));
+  SkCodec::Result result;
+  std::tie(image_, result) = codec->getImage();
+  if (result != SkCodec::kSuccess) {
+    error_ = fmt::format(
+        "failed to decode image: {}, {}", path_, fmt::underlying(result));
+    return;
+  }
 }
 
 int Renderer::LoadImageJob::Finish(lua_State *L) {
+  ZoneScopedN("FinishLoadImage");
   image_ = SkImages::TextureFromImage(recorder_, image_);
   auto *image = lua::New<LImage>(L, std::move(image_));
 
@@ -818,6 +835,7 @@ void Renderer::LoadFontfaceJob::Invoke(lua_State *L) {
 }
 
 void Renderer::LoadFontfaceJob::Run() {
+  ZoneScopedN("LoadFontface");
   if (!font_mgr_ ||
       !RegisterRuntimeFont(font_mgr_, std::move(file_), family_.c_str())) {
     error_ = fmt::format(

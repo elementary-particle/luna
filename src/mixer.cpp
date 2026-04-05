@@ -1,6 +1,7 @@
 #include "mixer.h"
 
 #include <fmt/format.h>
+#include <tracy/Tracy.hpp>
 
 #include "log.h"
 
@@ -157,6 +158,7 @@ Mixer::LoadAudioJob::~LoadAudioJob() {
 }
 
 void Mixer::LoadAudioJob::Run() {
+  ZoneScopedN("LoadAudio");
   audio_ = MIX_LoadAudio(mixer_, path_.c_str(), predecode_);
   if (!audio_) {
     error_ =
@@ -165,6 +167,7 @@ void Mixer::LoadAudioJob::Run() {
 }
 
 int Mixer::LoadAudioJob::Finish(lua_State *L) {
+  ZoneScopedN("FinishLoadAudio");
   auto *ud = static_cast<LuaAudio *>(lua_newuserdata(L, sizeof(LuaAudio)));
   *ud = LuaAudio{audio_, 0, false};
   audio_ = nullptr;
