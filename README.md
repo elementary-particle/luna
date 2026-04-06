@@ -145,13 +145,14 @@ Drawing and clipping:
 - `canvas:draw_rect(x, y, w, h, paint)`
 - `canvas:draw_rrect(x, y, w, h, rx, ry, paint)`
 - `canvas:draw_path(path, paint)`
-- `canvas:draw_image_rect(image, x, y, w, h, sx, sy, sw, sh, paint)`
+- `canvas:draw_image_rect(image, x, y, w, h, sx, sy, sw, sh, sampling, paint)`
 - `canvas:draw_text(text, x, y, font, paint)`
 - `canvas:draw_paragraph(paragraph, x, y)`
 - `canvas:clip_rect(x, y, w, h, op, anti_alias)`
 - `canvas:clip_rrect(x, y, w, h, rx, ry, op, anti_alias)`
 - `canvas:clip_path(path, op, anti_alias)`
 - `op` may be `"intersect"` or `"difference"`
+- `sampling` may be `"nearest"`, `"linear"`, or `"cubic"` and is optional
 
 Path construction:
 

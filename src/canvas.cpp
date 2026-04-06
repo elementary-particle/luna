@@ -18,6 +18,12 @@ namespace luna {
 
 namespace {
 
+enum class ImageSamplingMode {
+  kNearest = 0,
+  kLinear = 1,
+  kCubic = 2,
+};
+
 SkPaint::Style CheckPaintStyle(lua_State *L, int idx) {
   return static_cast<SkPaint::Style>(luaL_checkinteger(L, idx));
 }
@@ -166,6 +172,12 @@ return function(canvas_mt)
     slant = true,
   }
 
+  local image_sampling_ = {
+    nearest = 0,
+    linear = 1,
+    cubic = 2,
+  }
+
   local function normalize_paint_style(style, level)
     if style == nil then
       return nil
@@ -216,6 +228,24 @@ return function(canvas_mt)
     local mapped = blend_mode_[mode]
     if mapped == nil then
       error(string.format("invalid paint.blend_mode '%s'", mode), level or 3)
+    end
+    return mapped
+  end
+
+  local function normalize_image_sampling(sampling, level)
+    if sampling == nil then
+      return nil
+    end
+    if type(sampling) == "number" then
+      return sampling
+    end
+    if type(sampling) ~= "string" then
+      error("image sampling must be a number or string", level or 3)
+    end
+
+    local mapped = image_sampling_[sampling]
+    if mapped == nil then
+      error(string.format("invalid image sampling '%s'", sampling), level or 3)
     end
     return mapped
   end
@@ -329,7 +359,11 @@ return function(canvas_mt)
     return raw_draw_round_rect(self, x, y, w, h, rx, ry, compile_paint(self, paint, 3))
   end
 
-  function canvas_mt:draw_image_rect(image, x, y, w, h, sx, sy, sw, sh, paint)
+  function canvas_mt:draw_image_rect(image, x, y, w, h, sx, sy, sw, sh, sampling, paint)
+    if paint == nil and (sampling == nil or type(sampling) == "table" or type(sampling) == "userdata") then
+      paint = sampling
+      sampling = nil
+    end
     return raw_draw_image_rect(
       self,
       image,
@@ -341,6 +375,7 @@ return function(canvas_mt)
       sy,
       sw,
       sh,
+      normalize_image_sampling(sampling, 3),
       compile_paint(self, paint, 3)
     )
   end
@@ -785,10 +820,28 @@ void LCanvas::RegisterBindings(lua_State *L) {
       float sy = static_cast<float>(luaL_checknumber(L, 8));
       float sw = static_cast<float>(luaL_checknumber(L, 9));
       float sh = static_cast<float>(luaL_checknumber(L, 10));
+      ImageSamplingMode sampling = ImageSamplingMode::kNearest;
+      if (!lua_isnoneornil(L, 11)) {
+        sampling = static_cast<ImageSamplingMode>(luaL_checkinteger(L, 11));
+      }
 
       LPaint *paint = nullptr;
-      if (!lua_isnoneornil(L, 11)) {
-        paint = lua::Check<LPaint>(L, 11);
+      if (!lua_isnoneornil(L, 12)) {
+        paint = lua::Check<LPaint>(L, 12);
+      }
+
+      SkSamplingOptions sampling_options;
+      switch (sampling) {
+      case ImageSamplingMode::kLinear:
+        sampling_options = SkSamplingOptions(SkFilterMode::kLinear);
+        break;
+      case ImageSamplingMode::kCubic:
+        sampling_options = SkSamplingOptions(SkCubicResampler::Mitchell());
+        break;
+      case ImageSamplingMode::kNearest:
+      default:
+        sampling_options = SkSamplingOptions(SkFilterMode::kNearest);
+        break;
       }
 
       SkPaint default_paint;
@@ -802,7 +855,7 @@ void LCanvas::RegisterBindings(lua_State *L) {
                            SkFloatToScalar(y),
                            SkFloatToScalar(w),
                            SkFloatToScalar(h)),
-          SkSamplingOptions(),
+          sampling_options,
           paint ? &paint->sk : &default_paint,
           SkCanvas::SrcRectConstraint::kFast_SrcRectConstraint);
       return 0;
