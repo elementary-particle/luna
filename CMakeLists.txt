@@ -6,6 +6,10 @@ project(Luna LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(LUNA_ENABLE_SANITIZERS
+  "Enable address and undefined behavior sanitizers for supported debug builds"
+  OFF)
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 add_subdirectory(vendor)
 
@@ -32,6 +36,23 @@ set_target_properties(luna PROPERTIES OUTPUT_NAME "luna")
 
 target_compile_definitions(luna PRIVATE TRACY_ENABLE)
 target_include_directories(luna PRIVATE vendor/tracy)
+
+if(LUNA_ENABLE_SANITIZERS)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(FATAL_ERROR
+      "LUNA_ENABLE_SANITIZERS requires a Clang- or GCC-compatible C++ compiler")
+  endif()
+
+  target_compile_options(
+    luna PRIVATE
+    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+    $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
+  )
+  target_link_options(
+    luna PRIVATE
+    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+  )
+endif()
 
 find_package(fmt CONFIG REQUIRED)
 find_package(VulkanHeaders CONFIG REQUIRED)

@@ -41,6 +41,7 @@
         "VCPKG_LIBRARY_LINKAGE": "dynamic",
         "VCPKG_HOST_TRIPLET": "x64-linux-clang-dynamic",
         "VCPKG_TARGET_TRIPLET": "x64-linux-clang-dynamic",
+        "LUNA_ENABLE_SANITIZERS": "ON",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
