@@ -39,7 +39,7 @@ bool Engine::Init() {
     log::Error("engine", "renderer initialization failed");
     return false;
   }
-  if (!mixer_.Init()) {
+  if (!mixer_.Init(this)) {
     log::Error("engine", "mixer initialization failed");
     return false;
   }
@@ -105,7 +105,8 @@ void Engine::RegisterBindings(lua_State *L) {
   lua_pushcclosure(L, &L_MakeEvent, 1);
   lua_setfield(L, -2, "make_event");
 
-  lua_pushcfunction(L, &L_Wait);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_Wait, 1);
   lua_setfield(L, -2, "wait");
 
   lua_pushlightuserdata(L, this);
@@ -284,17 +285,28 @@ void Engine::SignalExpiredTimers() {
 
 void Engine::Tick() {
   ZoneScopedN("Lua");
-  for (Task *t : next_frame_tasks_) {
-    tasks_.push_back(t);
+  {
+    std::scoped_lock<std::mutex> lock(sched_mutex_);
+    for (Task *t : next_frame_tasks_) {
+      tasks_.push_back(t);
+    }
   }
   next_frame_tasks_.clear();
 
-  while (!tasks_.empty()) {
-    Task *t = tasks_.front();
-    tasks_.pop_front();
+  while (true) {
+    Task *t;
+    {
+      std::scoped_lock<std::mutex> lock(sched_mutex_);
+      if (tasks_.empty()) {
+        break;
+      }
+      t = tasks_.front();
+      tasks_.pop_front();
+    }
 
     int const status = ResumeTask(t);
     if (status == LUA_OK) {
+      std::scoped_lock<std::mutex> lock(sched_mutex_);
       RemoveTask(t);
       continue;
     }
@@ -306,7 +318,10 @@ void Engine::Tick() {
       const char *trace = lua_tostring(t->co, -1);
       log::Error("engine", "coroutine error:\n{}", trace ? trace : "(unknown)");
       lua_pop(t->co, 2);
-      RemoveTask(t);
+      {
+        std::scoped_lock<std::mutex> lock(sched_mutex_);
+        RemoveTask(t);
+      }
       alive_task_count_ = 0;
       break;
     }
@@ -445,6 +460,7 @@ std::shared_ptr<EventState> Engine::CreateEvent() const {
 void Engine::SignalEvent(const std::shared_ptr<EventState> &event) {
   if (!event)
     return;
+  std::scoped_lock<std::mutex> lock(sched_mutex_);
   WaitLink *link = event->waiters_head;
   while (link) {
     WaitLink *next = link->next_task;
@@ -477,9 +493,11 @@ int Engine::L_Start(lua_State *L) {
   lua_settable(L, -3);
   lua_pop(L, 1);
 
-  e->tasks_.push_back(t);
-  ++e->alive_task_count_;
-
+  {
+    std::scoped_lock<std::mutex> lock(e->sched_mutex_);
+    e->tasks_.push_back(t);
+    ++e->alive_task_count_;
+  }
   return 0;
 }
 
@@ -499,6 +517,7 @@ int Engine::L_MakeEvent(lua_State *L) {
 }
 
 int Engine::L_Wait(lua_State *L) {
+  Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
   const int arg_count = lua_gettop(L);
   if (arg_count <= 0) {
     return luaL_error(L, "wait: expected at least one event");
@@ -512,13 +531,16 @@ int Engine::L_Wait(lua_State *L) {
     return luaL_error(L, "internal error: task wait event list not cleared");
   }
 
-  t->wait = {WaitKind::EVENTS};
+  {
+    std::scoped_lock<std::mutex> lock(e->sched_mutex_);
+    t->wait = {WaitKind::EVENTS};
 
-  for (int i = 1; i <= arg_count; ++i) {
-    LEvent *event_ud = lua::Check<LEvent>(L, i);
-    EventState *event = event_ud->state.get();
+    for (int i = 1; i <= arg_count; ++i) {
+      LEvent *event_ud = lua::Check<LEvent>(L, i);
+      EventState *event = event_ud->state.get();
 
-    LinkEvent(t, event, i);
+      LinkEvent(t, event, i);
+    }
   }
 
   return lua_yield(L, 0);
@@ -542,7 +564,7 @@ int Engine::L_After(lua_State *L) {
   e->timers_.push_back(TimerEntry{deadline, event});
 
   lua_pushnumber(L, deadline);
-  lua::New<LEvent>(L, event);
+  lua::New<LEvent>(L, std::move(event));
   return 2;
 }
 

@@ -13,21 +13,28 @@
 
 namespace luna {
 
+class Engine;
+struct EventState;
+
 class Mixer {
 private:
-  struct LuaAudio {
+  struct LAudio {
+    static constexpr const char *MT = "luna.Audio";
     MIX_Audio *audio = nullptr;
     uint32_t track_refs = 0;
     bool destroy_requested = false;
   };
 
-  struct AudioTrackState {
+  struct TrackState {
+    Mixer *mixer = nullptr;
     MIX_Track *track = nullptr;
     int audio_ref = LUA_NOREF;
+    std::shared_ptr<EventState> stop_event;
   };
 
   class LoadAudioJob : public AsyncJob {
   public:
+    explicit LoadAudioJob(Mixer *mixer);
     ~LoadAudioJob() override;
     void Invoke(lua_State *L) override;
     void Run() override;
@@ -40,28 +47,29 @@ private:
     MIX_Audio *audio_ = nullptr;
   };
 
+  Engine *engine_ = nullptr;
   MIX_Mixer *mixer_ = nullptr;
   uint64_t next_audio_track_id_ = 1;
-  std::unordered_map<uint64_t, AudioTrackState> audio_tracks_;
+  std::unordered_map<uint64_t, TrackState> audio_tracks_;
 
-  void SetLuaGlobals(lua_State *L);
-  static Mixer *GetInstance(lua_State *L);
+  Engine *engine() const { return engine_; }
 
-  static LuaAudio *CheckLuaAudio(lua_State *L, int idx);
-  static void MaybeDestroyAudio(LuaAudio *audio);
-  static void ReleaseTrackAudio(lua_State *L, AudioTrackState &track_state);
+  static void MaybeDestroyAudio(LAudio *audio);
+  static void ReleaseTrackAudio(lua_State *L, TrackState &track_state);
 
-  static int L_AudioTrackCreate(lua_State *L);
-  static int L_AudioTrackDestroy(lua_State *L);
-  static int L_AudioTrackSet(lua_State *L);
-  static int L_AudioTrackPlay(lua_State *L);
-  static int L_AudioTrackStop(lua_State *L);
-  static int L_AudioTrackSetGain(lua_State *L);
-  static int L_AudioSetMixerGain(lua_State *L);
+  static int L_TrackCreate(lua_State *L);
+  static int L_TrackDestroy(lua_State *L);
+  static int L_TrackSet(lua_State *L);
+  static int L_TrackPlay(lua_State *L);
+  static int L_TrackStop(lua_State *L);
+  static int L_TrackPlaying(lua_State *L);
+  static int L_TrackStopEvent(lua_State *L);
+  static int L_TrackSetGain(lua_State *L);
+  static int L_SetMixerGain(lua_State *L);
   static int L_AudioDestroy(lua_State *L);
 
 public:
-  bool Init();
+  bool Init(Engine *engine);
   void Fini(lua_State *L = nullptr);
 
   void RegisterBindings(lua_State *L);

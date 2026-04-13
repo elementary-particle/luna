@@ -3,30 +3,14 @@
 #include <fmt/format.h>
 #include <tracy/Tracy.hpp>
 
+#include "engine.h"
 #include "log.h"
 
 namespace luna {
 
 static constexpr const char *MIXER_PTR_KEY = "luna.mixer_ptr";
-static constexpr const char *LUA_AUDIO_MT = "luna.Audio";
 
-void Mixer::SetLuaGlobals(lua_State *L) {
-  lua_pushlightuserdata(L, this);
-  lua_setfield(L, LUA_REGISTRYINDEX, MIXER_PTR_KEY);
-}
-
-Mixer *Mixer::GetInstance(lua_State *L) {
-  lua_getfield(L, LUA_REGISTRYINDEX, MIXER_PTR_KEY);
-  auto *mixer = static_cast<Mixer *>(lua_touserdata(L, -1));
-  lua_pop(L, 1);
-  return mixer;
-}
-
-Mixer::LuaAudio *Mixer::CheckLuaAudio(lua_State *L, int idx) {
-  return static_cast<LuaAudio *>(luaL_checkudata(L, idx, LUA_AUDIO_MT));
-}
-
-void Mixer::MaybeDestroyAudio(LuaAudio *audio) {
+void Mixer::MaybeDestroyAudio(LAudio *audio) {
   if (!audio) {
     return;
   }
@@ -36,13 +20,13 @@ void Mixer::MaybeDestroyAudio(LuaAudio *audio) {
   }
 }
 
-void Mixer::ReleaseTrackAudio(lua_State *L, AudioTrackState &track_state) {
+void Mixer::ReleaseTrackAudio(lua_State *L, TrackState &track_state) {
   if (track_state.audio_ref == LUA_NOREF) {
     return;
   }
 
   lua_rawgeti(L, LUA_REGISTRYINDEX, track_state.audio_ref);
-  auto *audio = CheckLuaAudio(L, -1);
+  auto *audio = lua::Check<LAudio>(L, -1);
   if (audio->track_refs > 0) {
     audio->track_refs -= 1;
   }
@@ -53,7 +37,9 @@ void Mixer::ReleaseTrackAudio(lua_State *L, AudioTrackState &track_state) {
   track_state.audio_ref = LUA_NOREF;
 }
 
-bool Mixer::Init() {
+bool Mixer::Init(Engine *engine) {
+  engine_ = engine;
+
   log::Info("mixer", "initializing");
   if (!MIX_Init()) {
     log::Error("mixer", "MIX_Init failed: {}", SDL_GetError());
@@ -93,9 +79,7 @@ void Mixer::Fini(lua_State *L) {
 }
 
 void Mixer::RegisterBindings(lua_State *L) {
-  SetLuaGlobals(L);
-
-  if (luaL_newmetatable(L, LUA_AUDIO_MT)) {
+  if (lua::NewType<LAudio>(L)) {
     lua_pushcfunction(L, &L_AudioDestroy);
     lua_setfield(L, -2, "__gc");
 
@@ -108,33 +92,50 @@ void Mixer::RegisterBindings(lua_State *L) {
   lua_pop(L, 1);
 
   lua_newtable(L);
-  lua_pushcfunction(L, &L_AudioTrackCreate);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_TrackCreate, 1);
   lua_setfield(L, -2, "track_create");
 
-  lua_pushcfunction(L, &L_AudioTrackDestroy);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_TrackDestroy, 1);
   lua_setfield(L, -2, "track_destroy");
 
-  lua_pushcfunction(L, &L_AudioTrackSet);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_TrackSet, 1);
   lua_setfield(L, -2, "track_set");
 
-  lua_pushcfunction(L, &L_AudioTrackPlay);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_TrackPlay, 1);
   lua_setfield(L, -2, "track_play");
 
-  lua_pushcfunction(L, &L_AudioTrackStop);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_TrackStop, 1);
   lua_setfield(L, -2, "track_stop");
 
-  lua_pushcfunction(L, &L_AudioTrackSetGain);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_TrackPlaying, 1);
+  lua_setfield(L, -2, "track_playing");
+
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_TrackStopEvent, 1);
+  lua_setfield(L, -2, "track_stop_event");
+
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_TrackSetGain, 1);
   lua_setfield(L, -2, "track_set_gain");
 
-  lua_pushcfunction(L, &L_AudioSetMixerGain);
+  lua_pushlightuserdata(L, this);
+  lua_pushcclosure(L, &L_SetMixerGain, 1);
   lua_setfield(L, -2, "set_mixer_gain");
 
   lua_setfield(L, -2, "audio");
 }
 
 std::unique_ptr<AsyncJob> Mixer::MakeLoadAudioJob() {
-  return std::make_unique<LoadAudioJob>();
+  return std::make_unique<LoadAudioJob>(this);
 }
+
+Mixer::LoadAudioJob::LoadAudioJob(Mixer *mixer) { mixer_ = mixer->mixer_; }
 
 void Mixer::LoadAudioJob::Invoke(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
@@ -144,7 +145,6 @@ void Mixer::LoadAudioJob::Invoke(lua_State *L) {
 
   path_ = path;
   predecode_ = lua_toboolean(L, 2) != 0;
-  mixer_ = GetInstance(L)->mixer_;
   if (!mixer_) {
     luaL_error(L, "audio mixer is not initialized");
   }
@@ -167,17 +167,13 @@ void Mixer::LoadAudioJob::Run() {
 }
 
 int Mixer::LoadAudioJob::Finish(lua_State *L) {
-  ZoneScopedN("FinishLoadAudio");
-  auto *ud = static_cast<LuaAudio *>(lua_newuserdata(L, sizeof(LuaAudio)));
-  *ud = LuaAudio{audio_, 0, false};
+  auto *ud = lua::New<LAudio>(L, audio_, 0, false);
   audio_ = nullptr;
-  luaL_getmetatable(L, LUA_AUDIO_MT);
-  lua_setmetatable(L, -2);
   return 1;
 }
 
-int Mixer::L_AudioTrackCreate(lua_State *L) {
-  Mixer *m = GetInstance(L);
+int Mixer::L_TrackCreate(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
   if (!m->mixer_) {
     return luaL_error(L, "audio mixer is not initialized");
   }
@@ -188,14 +184,13 @@ int Mixer::L_AudioTrackCreate(lua_State *L) {
   }
 
   const uint64_t id = m->next_audio_track_id_++;
-  m->audio_tracks_[id] = AudioTrackState{track, LUA_NOREF};
-
+  m->audio_tracks_.try_emplace(id, m, track);
   lua_pushinteger(L, static_cast<lua_Integer>(id));
   return 1;
 }
 
-int Mixer::L_AudioTrackDestroy(lua_State *L) {
-  Mixer *m = GetInstance(L);
+int Mixer::L_TrackDestroy(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
   const uint64_t id = static_cast<uint64_t>(luaL_checkinteger(L, 1));
   auto it = m->audio_tracks_.find(id);
   if (it == m->audio_tracks_.end()) {
@@ -211,10 +206,10 @@ int Mixer::L_AudioTrackDestroy(lua_State *L) {
   return 0;
 }
 
-int Mixer::L_AudioTrackSet(lua_State *L) {
-  Mixer *m = GetInstance(L);
+int Mixer::L_TrackSet(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
   const uint64_t id = static_cast<uint64_t>(luaL_checkinteger(L, 1));
-  auto *audio = CheckLuaAudio(L, 2);
+  auto *audio = lua::Check<LAudio>(L, 2);
 
   auto it = m->audio_tracks_.find(id);
   if (it == m->audio_tracks_.end()) {
@@ -236,8 +231,8 @@ int Mixer::L_AudioTrackSet(lua_State *L) {
   return 0;
 }
 
-int Mixer::L_AudioTrackPlay(lua_State *L) {
-  Mixer *m = GetInstance(L);
+int Mixer::L_TrackPlay(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
   const uint64_t id = static_cast<uint64_t>(luaL_checkinteger(L, 1));
   auto it = m->audio_tracks_.find(id);
   if (it == m->audio_tracks_.end()) {
@@ -272,8 +267,8 @@ int Mixer::L_AudioTrackPlay(lua_State *L) {
   }
 
   if (fade_in_ms > 0 &&
-      !SDL_SetNumberProperty(
-          props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, fade_in_ms)) {
+      !SDL_SetNumberProperty(props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER,
+                             fade_in_ms)) {
     SDL_DestroyProperties(props);
     return luaL_error(L, "failed to set fade property: %s", SDL_GetError());
   }
@@ -288,8 +283,8 @@ int Mixer::L_AudioTrackPlay(lua_State *L) {
   return 0;
 }
 
-int Mixer::L_AudioTrackStop(lua_State *L) {
-  Mixer *m = GetInstance(L);
+int Mixer::L_TrackStop(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
   const uint64_t id = static_cast<uint64_t>(luaL_checkinteger(L, 1));
   const Sint64 fade_out_ms = (Sint64)luaL_optinteger(L, 2, 0);
 
@@ -310,8 +305,54 @@ int Mixer::L_AudioTrackStop(lua_State *L) {
   return 0;
 }
 
-int Mixer::L_AudioTrackSetGain(lua_State *L) {
-  Mixer *m = GetInstance(L);
+int Mixer::L_TrackPlaying(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
+  const uint64_t id = static_cast<uint64_t>(luaL_checkinteger(L, 1));
+
+  auto it = m->audio_tracks_.find(id);
+  if (it == m->audio_tracks_.end()) {
+    return luaL_error(L, "track not found: %llu", (unsigned long long)id);
+  }
+
+  TrackState &track_state = it->second;
+  lua_pushboolean(L, MIX_TrackPlaying(track_state.track));
+  return 1;
+}
+
+int Mixer::L_TrackStopEvent(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
+  Engine *e = m->engine();
+  const uint64_t id = static_cast<uint64_t>(luaL_checkinteger(L, 1));
+
+  auto it = m->audio_tracks_.find(id);
+  if (it == m->audio_tracks_.end()) {
+    return luaL_error(L, "track not found: %llu", (unsigned long long)id);
+  }
+
+  TrackState &track_state = it->second;
+  if (!track_state.stop_event) {
+    auto stop_event = e->CreateEvent();
+    track_state.stop_event = stop_event;
+    if (!MIX_SetTrackStoppedCallback(
+            it->second.track,
+            [](void *userdata, MIX_Track *track) {
+              auto track_state = static_cast<TrackState *>(userdata);
+              track_state->mixer->engine()->SignalEvent(
+                  track_state->stop_event);
+            },
+            &track_state)) {
+      track_state.stop_event.reset();
+      return luaL_error(L, "MIX_SetTrackStoppedCallback failed: %s",
+                        SDL_GetError());
+    }
+  }
+
+  e->PushEvent(L, track_state.stop_event);
+  return 1;
+}
+
+int Mixer::L_TrackSetGain(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
   const uint64_t id = static_cast<uint64_t>(luaL_checkinteger(L, 1));
   const float gain = (float)luaL_checknumber(L, 2);
 
@@ -331,8 +372,8 @@ int Mixer::L_AudioTrackSetGain(lua_State *L) {
   return 0;
 }
 
-int Mixer::L_AudioSetMixerGain(lua_State *L) {
-  Mixer *m = GetInstance(L);
+int Mixer::L_SetMixerGain(lua_State *L) {
+  Mixer *m = static_cast<Mixer *>(lua_touserdata(L, lua_upvalueindex(1)));
   const float gain = (float)luaL_checknumber(L, 1);
   if (gain < 0.0f) {
     return luaL_error(L, "gain must be >= 0");
@@ -346,7 +387,7 @@ int Mixer::L_AudioSetMixerGain(lua_State *L) {
 }
 
 int Mixer::L_AudioDestroy(lua_State *L) {
-  auto *audio = CheckLuaAudio(L, 1);
+  auto *audio = lua::Check<LAudio>(L, 1);
   audio->destroy_requested = true;
   Mixer::MaybeDestroyAudio(audio);
   return 0;

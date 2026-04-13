@@ -6,6 +6,7 @@
 #include <chrono>
 #include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -64,6 +65,12 @@ public:
   bool Init();
   void Run(const std::string &entry_path = "main.lua");
 
+  std::shared_ptr<EventState> CreateEvent() const;
+  void SignalEvent(const std::shared_ptr<EventState> &event);
+  static void PushEvent(lua_State *L, std::shared_ptr<EventState> &event) {
+    lua::New<LEvent>(L, event);
+  }
+
 private:
   struct TimerEntry {
     double deadline_seconds = 0.0;
@@ -111,6 +118,7 @@ private:
 
   std::unordered_map<PromiseId, std::shared_ptr<PromiseState>>
       pending_promises_;
+  std::mutex sched_mutex_;
   std::deque<Task *> tasks_;
   std::vector<Task *> next_frame_tasks_;
   int alive_task_count_ = 0;
@@ -135,9 +143,6 @@ private:
   static void UnlinkWaitNode(WaitLink *node);
   static void UnlinkAllEvents(Task *t);
   static void LinkEvent(Task *t, EventState *e, int index);
-
-  std::shared_ptr<EventState> CreateEvent() const;
-  void SignalEvent(const std::shared_ptr<EventState> &event);
 
   static int YieldWithWait(lua_State *L);
 
