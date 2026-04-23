@@ -208,8 +208,8 @@ struct Canvas {
       BLMatrix2D initial_transform = BLMatrix2D::make_identity(),
       uint32_t thread_count = 0);
   void ResetTopImage(BLImage image, BLMatrix2D initial_transform);
+  BLImage TakeTopImage();
   void Flush();
-  BLImage const *CurrentImage() const;
 
   void Clear(uint32_t color);
   void Save();

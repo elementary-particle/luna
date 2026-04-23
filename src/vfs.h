@@ -24,7 +24,7 @@ public:
 
   std::string SaveRoot() const { return save_root_.string(); }
 
-  void RegisterBindings(lua_State *L);
+  void BindLua(lua_State *L);
   std::filesystem::path ResolveSandboxedPath(const std::string &path) const;
 
   SDL_IOStream *OpenFile(std::string path);

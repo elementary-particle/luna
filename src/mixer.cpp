@@ -57,15 +57,20 @@ bool Mixer::Init(Engine *engine) {
   return true;
 }
 
-void Mixer::Fini(lua_State *L) {
+void Mixer::ReleaseLua(lua_State *L) {
+  MIX_StopAllTracks(mixer_, 0);
+  for (auto &[id, track_state] : audio_tracks_) {
+    (void)id;
+    ReleaseTrackAudio(L, track_state);
+  }
+}
+
+void Mixer::Fini() {
   for (auto &[id, track_state] : audio_tracks_) {
     (void)id;
     if (track_state.track) {
       MIX_DestroyTrack(track_state.track);
       track_state.track = nullptr;
-    }
-    if (L) {
-      ReleaseTrackAudio(L, track_state);
     }
   }
   audio_tracks_.clear();
@@ -78,7 +83,7 @@ void Mixer::Fini(lua_State *L) {
   MIX_Quit();
 }
 
-void Mixer::RegisterBindings(lua_State *L) {
+void Mixer::BindLua(lua_State *L) {
   if (lua::NewType<LAudio>(L)) {
     lua_pushcfunction(L, &L_AudioDestroy);
     lua_setfield(L, -2, "__gc");
@@ -267,8 +272,8 @@ int Mixer::L_TrackPlay(lua_State *L) {
   }
 
   if (fade_in_ms > 0 &&
-      !SDL_SetNumberProperty(props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER,
-                             fade_in_ms)) {
+      !SDL_SetNumberProperty(
+          props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, fade_in_ms)) {
     SDL_DestroyProperties(props);
     return luaL_error(L, "failed to set fade property: %s", SDL_GetError());
   }
@@ -342,8 +347,8 @@ int Mixer::L_TrackStopEvent(lua_State *L) {
             },
             &track_state)) {
       track_state.stop_event.reset();
-      return luaL_error(L, "MIX_SetTrackStoppedCallback failed: %s",
-                        SDL_GetError());
+      return luaL_error(
+          L, "MIX_SetTrackStoppedCallback failed: %s", SDL_GetError());
     }
   }
 

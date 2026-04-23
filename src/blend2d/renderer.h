@@ -47,6 +47,9 @@ private:
   bool UpdateWindowMetrics(bool *changed = nullptr);
   bool EnsureGraphicsReady();
   void RecreatePresentationResources();
+  bool LockFramebufferTexture();
+  void UnlockFramebufferTexture();
+  void DiscardWindowCanvasFramebuffer();
   void SetFatalError(std::string message);
 
   static int L_MakeCanvas(lua_State *L);
@@ -58,6 +61,9 @@ private:
   SDL_Texture *texture_ = nullptr;
   BLImage framebuffer_;
   BLFontManager font_mgr_;
+  void *locked_texture_pixels_ = nullptr;
+  int locked_texture_pitch_ = 0;
+  bool clear_locked_texture_ = false;
 
   int canvas_width_ = 1280;
   int canvas_height_ = 720;
@@ -75,10 +81,11 @@ public:
   ~Blend2dRenderer() override = default;
 
   bool Init() override;
+  void ReleaseLua(lua_State *L) override;
   void Fini() override;
   bool BeginFrame(lua_State *L) override;
   bool EndFrame() override;
-  void RegisterBindings(lua_State *L) override;
+  void BindLua(lua_State *L) override;
   bool SetWindowSize(int width, int height) override;
   bool HasFatalError() const override { return fatal_error_; }
   const std::string &GetFatalError() const override {

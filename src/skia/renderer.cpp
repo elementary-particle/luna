@@ -413,6 +413,13 @@ void SkiaRenderer::Fini() {
   FiniSdl();
 }
 
+void SkiaRenderer::ReleaseLua(lua_State *L) {
+  if (L != nullptr && window_canvas_ref_ != LUA_NOREF) {
+    luaL_unref(L, LUA_REGISTRYINDEX, window_canvas_ref_);
+  }
+  window_canvas_ref_ = LUA_NOREF;
+}
+
 bool SkiaRenderer::BeginFrame(lua_State *L) {
   ZoneScopedN("BeginFrame");
   frame_active_ = false;
@@ -765,7 +772,7 @@ int SkiaRenderer::L_MakeCanvas(lua_State *L) {
   return 1;
 }
 
-void SkiaRenderer::RegisterBindings(lua_State *L) {
+void SkiaRenderer::BindLua(lua_State *L) {
   if (lua::NewType<Image>(L)) {
     lua_pushcfunction(L, [](lua_State *L) {
       Image *image = lua::Check<Image>(L, 1);

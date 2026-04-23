@@ -122,10 +122,11 @@ public:
   ~SkiaRenderer() override = default;
 
   bool Init() override;
+  void ReleaseLua(lua_State *L) override;
   void Fini() override;
   bool BeginFrame(lua_State *L) override;
   bool EndFrame() override;
-  void RegisterBindings(lua_State *L) override;
+  void BindLua(lua_State *L) override;
   bool SetWindowSize(int width, int height) override;
   bool HasFatalError() const override { return fatal_error_; }
   const std::string &GetFatalError() const override {

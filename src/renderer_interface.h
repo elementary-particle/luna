@@ -38,10 +38,11 @@ public:
   virtual ~Renderer() = default;
 
   virtual bool Init() = 0;
+  virtual void ReleaseLua(lua_State *L) = 0;
   virtual void Fini() = 0;
   virtual bool BeginFrame(lua_State *L) = 0;
   virtual bool EndFrame() = 0;
-  virtual void RegisterBindings(lua_State *L) = 0;
+  virtual void BindLua(lua_State *L) = 0;
   virtual bool SetWindowSize(int width, int height) = 0;
   virtual bool HasFatalError() const = 0;
   virtual const std::string &GetFatalError() const = 0;

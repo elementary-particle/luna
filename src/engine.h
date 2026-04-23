@@ -127,7 +127,7 @@ private:
 
   bool InitLua();
 
-  void RegisterBindings(lua_State *L);
+  void BindLua(lua_State *L);
   void RegisterLuaTypes(lua_State *L);
   bool CallLuaMain(const std::string &entry_path);
 

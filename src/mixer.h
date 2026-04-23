@@ -70,9 +70,10 @@ private:
 
 public:
   bool Init(Engine *engine);
-  void Fini(lua_State *L = nullptr);
+  void ReleaseLua(lua_State *L);
+  void Fini();
 
-  void RegisterBindings(lua_State *L);
+  void BindLua(lua_State *L);
 
   std::unique_ptr<AsyncJob> MakeLoadAudioJob();
 };

@@ -515,17 +515,20 @@ void Canvas::ResetTopImage(BLImage image, BLMatrix2D initial_transform) {
   ReattachContext(this);
 }
 
+BLImage Canvas::TakeTopImage() {
+  DetachContext(this);
+  if (stack.empty()) {
+    return BLImage();
+  }
+  BLImage image = std::move(Current(this).image);
+  stack.clear();
+  return image;
+}
+
 void Canvas::Flush() {
   if (ctx.is_valid()) {
     ctx.flush(BL_CONTEXT_FLUSH_SYNC);
   }
-}
-
-BLImage const *Canvas::CurrentImage() const {
-  if (stack.empty()) {
-    return nullptr;
-  }
-  return &Current(this).image;
 }
 
 void Canvas::Clear(uint32_t color) {

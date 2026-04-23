@@ -438,7 +438,8 @@ void VerifyBlend2dWindowCoordinateHitTesting() {
   ctx.end();
 
   Canvas canvas;
-  canvas.Init(std::move(image), luna::backend::blend2d::MakeRuntimeFontManager(),
+  canvas.Init(std::move(image),
+      luna::backend::blend2d::MakeRuntimeFontManager(),
       BLMatrix2D::make_scaling(2.0, 2.0));
 
   Require<Backend>(canvas.HitTestRect(10.0, 20.0, 30.0, 40.0, 25.0, 35.0),
@@ -651,17 +652,19 @@ void DrawRandomScene(
   }
 }
 
-void WritePng(const PixelBuffer &buffer, const std::filesystem::path &path) {
-  const SkImageInfo info = SkImageInfo::Make(
-      buffer.width, buffer.height, kN32_SkColorType, kPremul_SkAlphaType);
-  SkPixmap pixmap(
-      info, buffer.bytes.data(), static_cast<size_t>(buffer.stride));
-  SkFILEWStream stream(path.c_str());
-  if (!stream.isValid()) {
-    throw std::runtime_error(fmt::format("failed to open {}", path.string()));
+void WritePng(PixelBuffer const &buffer, const std::filesystem::path &path) {
+  BLImage image;
+  BLResult result = image.create_from_data(buffer.width, buffer.height,
+      BL_FORMAT_PRGB32, const_cast<uint8_t *>(buffer.bytes.data()),
+      buffer.stride, BL_DATA_ACCESS_READ);
+  if (result != BL_SUCCESS) {
+    throw std::runtime_error(
+        fmt::format("failed to create image {}", path.string()));
   }
-  if (!SkPngEncoder::Encode(&stream, pixmap, {})) {
-    throw std::runtime_error(fmt::format("failed to encode {}", path.string()));
+  result = image.write_to_file(path.c_str());
+  if (result != BL_SUCCESS) {
+    throw std::runtime_error(
+        fmt::format("failed to write image {} to file", path.string()));
   }
 }
 

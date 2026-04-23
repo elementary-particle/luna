@@ -1,6 +1,7 @@
 #include "blend2d/renderer.h"
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 
 #include <fmt/format.h>
@@ -74,21 +75,8 @@ void Blend2dRenderer::CreatePresentationResources() {
     texture_ = nullptr;
   }
   framebuffer_.reset();
-
-  if (framebuffer_.create(canvas_width_, canvas_height_, BL_FORMAT_PRGB32) !=
-      BL_SUCCESS) {
-    throw std::runtime_error("failed to create Blend2D framebuffer");
-  }
-
-  {
-    BLContext ctx;
-    if (!BeginContext(&ctx, framebuffer_, thread_count_)) {
-      throw std::runtime_error("failed to begin Blend2D framebuffer context");
-    }
-    ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
-    ctx.fill_all(BLRgba32(0u));
-    ctx.end();
-  }
+  locked_texture_pixels_ = nullptr;
+  locked_texture_pitch_ = 0;
 
   texture_ = SDL_CreateTexture(sdl_renderer_, SDL_PIXELFORMAT_ARGB8888,
       SDL_TEXTUREACCESS_STREAMING, canvas_width_, canvas_height_);
@@ -96,9 +84,11 @@ void Blend2dRenderer::CreatePresentationResources() {
     throw std::runtime_error(fmt::format(
         "SDL_CreateTexture failed: {}", SDL_GetError()));
   }
+  clear_locked_texture_ = true;
 }
 
 void Blend2dRenderer::DestroyPresentationResources() {
+  UnlockFramebufferTexture();
   framebuffer_.reset();
   if (texture_) {
     SDL_DestroyTexture(texture_);
@@ -199,6 +189,72 @@ void Blend2dRenderer::RecreatePresentationResources() {
       canvas_scale_x_, canvas_scale_y_);
 }
 
+bool Blend2dRenderer::LockFramebufferTexture() {
+  if (!texture_) {
+    return false;
+  }
+  if (locked_texture_pixels_ != nullptr) {
+    return true;
+  }
+  if (!SDL_LockTexture(
+          texture_, nullptr, &locked_texture_pixels_, &locked_texture_pitch_)) {
+    SetFatalError(fmt::format("SDL_LockTexture failed: {}", SDL_GetError()));
+    return false;
+  }
+  if (locked_texture_pixels_ == nullptr || locked_texture_pitch_ <= 0) {
+    UnlockFramebufferTexture();
+    SetFatalError("SDL_LockTexture returned invalid framebuffer memory");
+    return false;
+  }
+  if (clear_locked_texture_) {
+    std::memset(locked_texture_pixels_, 0,
+        static_cast<size_t>(locked_texture_pitch_) *
+            static_cast<size_t>(canvas_height_));
+    clear_locked_texture_ = false;
+  }
+  if (framebuffer_.create_from_data(canvas_width_, canvas_height_,
+          BL_FORMAT_PRGB32, locked_texture_pixels_, locked_texture_pitch_) !=
+      BL_SUCCESS) {
+    UnlockFramebufferTexture();
+    SetFatalError("failed to create Blend2D framebuffer from locked texture");
+    return false;
+  }
+  return true;
+}
+
+void Blend2dRenderer::UnlockFramebufferTexture() {
+  framebuffer_.reset();
+  if (locked_texture_pixels_ == nullptr) {
+    locked_texture_pitch_ = 0;
+    return;
+  }
+  SDL_UnlockTexture(texture_);
+  locked_texture_pixels_ = nullptr;
+  locked_texture_pitch_ = 0;
+}
+
+void Blend2dRenderer::DiscardWindowCanvasFramebuffer() {
+  if (!lua_ || window_canvas_ref_ == LUA_NOREF) {
+    return;
+  }
+
+  lua_rawgeti(lua_, LUA_REGISTRYINDEX, window_canvas_ref_);
+  if (!lua_isnil(lua_, -1)) {
+    auto *canvas = lua::Check<Canvas>(lua_, -1);
+    canvas->TakeTopImage();
+  }
+  lua_pop(lua_, 1);
+}
+
+void Blend2dRenderer::ReleaseLua(lua_State *L) {
+  if (L != nullptr && lua_ == L && window_canvas_ref_ != LUA_NOREF) {
+    DiscardWindowCanvasFramebuffer();
+    luaL_unref(L, LUA_REGISTRYINDEX, window_canvas_ref_);
+  }
+  window_canvas_ref_ = LUA_NOREF;
+  lua_ = nullptr;
+}
+
 void Blend2dRenderer::Fini() {
   frame_active_ = false;
   DestroyPresentationResources();
@@ -228,6 +284,9 @@ bool Blend2dRenderer::BeginFrame(lua_State *L) {
       return false;
     }
   }
+  if (!LockFramebufferTexture()) {
+    return false;
+  }
 
   lua_rawgeti(L, LUA_REGISTRYINDEX, window_canvas_ref_);
   if (!lua_isnil(L, -1)) {
@@ -246,34 +305,24 @@ bool Blend2dRenderer::EndFrame() {
     return !fatal_error_;
   }
 
-  const BLImage *present_image = nullptr;
+  bool took_framebuffer = false;
   lua_rawgeti(lua_, LUA_REGISTRYINDEX, window_canvas_ref_);
   if (!lua_isnil(lua_, -1)) {
     auto *canvas = lua::Check<Canvas>(lua_, -1);
     canvas->Flush();
-    present_image = canvas->CurrentImage();
+    framebuffer_ = canvas->TakeTopImage();
+    took_framebuffer = true;
   }
   lua_pop(lua_, 1);
 
-  if (present_image == nullptr || present_image->is_empty()) {
-    SetFatalError("failed to access presented framebuffer");
+  if (!took_framebuffer || framebuffer_.is_empty() ||
+      locked_texture_pixels_ == nullptr) {
+    SetFatalError("failed to access texture-backed framebuffer");
     frame_active_ = false;
     return false;
   }
 
-  BLImageData data{};
-  if (present_image->get_data(&data) != BL_SUCCESS || data.pixel_data == nullptr) {
-    SetFatalError("failed to access framebuffer pixels");
-    frame_active_ = false;
-    return false;
-  }
-
-  if (!SDL_UpdateTexture(texture_, nullptr, data.pixel_data,
-          static_cast<int>(data.stride))) {
-    SetFatalError(fmt::format("SDL_UpdateTexture failed: {}", SDL_GetError()));
-    frame_active_ = false;
-    return false;
-  }
+  UnlockFramebufferTexture();
   if (!SDL_RenderClear(sdl_renderer_)) {
     SetFatalError(fmt::format("SDL_RenderClear failed: {}", SDL_GetError()));
     frame_active_ = false;
@@ -285,7 +334,6 @@ bool Blend2dRenderer::EndFrame() {
     return false;
   }
   SDL_RenderPresent(sdl_renderer_);
-  framebuffer_ = *present_image;
 
   frame_active_ = false;
   return true;
@@ -368,7 +416,7 @@ int Blend2dRenderer::L_MakeCanvas(lua_State *L) {
   return 1;
 }
 
-void Blend2dRenderer::RegisterBindings(lua_State *L) {
+void Blend2dRenderer::BindLua(lua_State *L) {
   lua_ = L;
 
   if (lua::NewType<Image>(L)) {

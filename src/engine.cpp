@@ -57,13 +57,16 @@ Engine::~Engine() {
   pending_promises_.clear();
   timers_.clear();
 
+  if (renderer_) {
+    renderer_->ReleaseLua(L_);
+  }
+  mixer_.ReleaseLua(L_);
   if (L_) {
-    mixer_.Fini(L_);
     lua_close(L_);
     L_ = nullptr;
-  } else {
-    mixer_.Fini();
   }
+
+  mixer_.Fini();
 
   if (renderer_) {
     renderer_->Fini();
@@ -81,7 +84,7 @@ bool Engine::InitLua() {
   lua_getfield(L_, LUA_REGISTRYINDEX, "_PRELOAD");
   lua::PushFunction(L_, [this](lua_State *L) {
     RegisterLuaTypes(L);
-    RegisterBindings(L);
+    BindLua(L);
 
     return 1;
   });
@@ -91,7 +94,7 @@ bool Engine::InitLua() {
   return true;
 }
 
-void Engine::RegisterBindings(lua_State *L) {
+void Engine::BindLua(lua_State *L) {
   lua_newtable(L);
 
   lua_pushlightuserdata(L, this);
@@ -167,9 +170,9 @@ void Engine::RegisterBindings(lua_State *L) {
   lua_setfield(L, -2, "tracy");
 #endif
 
-  renderer_->RegisterBindings(L);
-  mixer_.RegisterBindings(L);
-  vfs_.RegisterBindings(L);
+  renderer_->BindLua(L);
+  mixer_.BindLua(L);
+  vfs_.BindLua(L);
 }
 
 void Engine::RegisterLuaTypes(lua_State *L) {

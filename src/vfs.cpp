@@ -588,7 +588,7 @@ int VFS::L_SaveReadJson(lua_State *L) {
   }
 }
 
-void VFS::RegisterBindings(lua_State *L) {
+void VFS::BindLua(lua_State *L) {
   SetLuaGlobals(L);
 
   if (luaL_newmetatable(L, LUA_VFS_FILE_MT)) {
