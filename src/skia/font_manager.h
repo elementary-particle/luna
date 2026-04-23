@@ -8,12 +8,11 @@
 
 class SkStreamAsset;
 
-namespace luna {
+namespace luna::backend::skia {
 
 sk_sp<SkFontMgr> MakeRuntimeFontManager();
 bool RegisterRuntimeFont(const sk_sp<SkFontMgr> &font_mgr,
-                         std::unique_ptr<SkStreamAsset> stream,
-                         const char family_name[]);
+                         std::unique_ptr<SkStreamAsset> stream);
 
 } // namespace luna
 

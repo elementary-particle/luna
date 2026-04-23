@@ -13,7 +13,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  e.Run(entry_path);
+  const int exit_code = e.Run(entry_path) ? 0 : 1;
   luna::log::Shutdown();
-  return 0;
+  return exit_code;
 }

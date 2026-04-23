@@ -1,7 +1,7 @@
 #ifndef LUNA_VFS_H
 #define LUNA_VFS_H
 
-#include "lua.hpp"
+struct lua_State;
 
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_stdinc.h>

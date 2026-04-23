@@ -1,12 +1,9 @@
-#ifndef LUNA_RENDERER_H
-#define LUNA_RENDERER_H
-
-#include "lua.hpp"
+#ifndef LUNA_SKIA_RENDERER_H
+#define LUNA_SKIA_RENDERER_H
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-#include <gpu/graphite/vk/VulkanGraphiteTypes.h>
 #include <memory>
 #include <optional>
 #include <string>
@@ -18,24 +15,22 @@
 #include <skia/core/SkFont.h>
 #include <skia/core/SkFontMgr.h>
 #include <skia/core/SkImage.h>
+#include <skia/core/SkMatrix.h>
 #include <skia/core/SkStream.h>
 #include <skia/core/SkSurface.h>
 #include <skia/core/SkTypeface.h>
 #include <skia/gpu/graphite/Context.h>
+#include <skia/gpu/graphite/vk/VulkanGraphiteTypes.h>
 
 #include "factory.h"
+#include "renderer_interface.h"
 
-namespace luna {
+struct lua_State;
 
-class Renderer {
+namespace luna::backend::skia {
+
+class SkiaRenderer final : public Renderer {
 private:
-  struct PolledEvent {
-    std::string type;
-    std::optional<std::string> button;
-    int x = 0;
-    int y = 0;
-  };
-
   struct DeviceCaps {
     uint32_t queue_family_index;
     vk::SurfaceFormatKHR surface_format;
@@ -69,7 +64,6 @@ private:
   private:
     sk_sp<SkFontMgr> font_mgr_;
     std::string path_;
-    std::string family_;
     std::unique_ptr<SkStreamAsset> file_;
   };
 
@@ -81,13 +75,10 @@ private:
   bool UpdateWindowMetrics(bool *changed = nullptr);
   bool EnsureGraphicsReady();
   void RecreateSwapchain();
-  void PumpSdlEvents();
   void SetFatalError(std::string message);
 
-  static int L_PollSdlEvents(lua_State *L);
   static int L_MakeCanvas(lua_State *L);
 
-  SDL_Window *window_ = nullptr;
   int window_canvas_ref_ = LUA_NOREF;
 
   vk::Instance vk_instance_;
@@ -116,37 +107,35 @@ private:
   std::unique_ptr<skgpu::graphite::Recorder> sk_recorder_;
   sk_sp<SkFontMgr> font_mgr_;
 
-  int window_width_ = 1280;
-  int window_height_ = 720;
   int canvas_width_ = 1280;
   int canvas_height_ = 720;
   float canvas_scale_x_ = 1.0f;
   float canvas_scale_y_ = 1.0f;
-  bool sdl_ready_ = false;
+  SkMatrix window_to_surface_matrix_ = SkMatrix::I();
   bool graphics_ready_ = false;
-  bool swapchain_dirty_ = false;
   bool frame_active_ = false;
   bool fatal_error_ = false;
   std::string fatal_error_message_;
 
-  std::vector<PolledEvent> polled_events_;
-
 public:
-  Renderer();
+  SkiaRenderer();
+  ~SkiaRenderer() override = default;
 
-  bool Init();
-  void Fini();
-  bool BeginFrame(lua_State *L);
-  bool EndFrame();
-  void RegisterBindings(lua_State *L);
-  bool SetWindowSize(int width, int height);
-  bool HasFatalError() const { return fatal_error_; }
-  const std::string &GetFatalError() const { return fatal_error_message_; }
+  bool Init() override;
+  void Fini() override;
+  bool BeginFrame(lua_State *L) override;
+  bool EndFrame() override;
+  void RegisterBindings(lua_State *L) override;
+  bool SetWindowSize(int width, int height) override;
+  bool HasFatalError() const override { return fatal_error_; }
+  const std::string &GetFatalError() const override {
+    return fatal_error_message_;
+  }
 
-  std::unique_ptr<AsyncJob> MakeLoadImageJob();
-  std::unique_ptr<AsyncJob> MakeLoadFontfaceJob();
+  std::unique_ptr<AsyncJob> MakeLoadImageJob() override;
+  std::unique_ptr<AsyncJob> MakeLoadFontfaceJob() override;
 };
 
-} // namespace luna
+} // namespace luna::backend::skia
 
 #endif

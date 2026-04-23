@@ -7,14 +7,13 @@
 
 #include <fmt/core.h>
 #include <tracy/Tracy.hpp>
+#include <tracy/TracyLua.hpp>
 
 #include "factory.h"
 #include "log.h"
-#include "renderer.h"
 
 namespace luna {
 
-static constexpr const char *LIBRARY_REGKEY = "luna";
 static constexpr const char *CO_TASK_MAP_REGKEY = "luna.co_task_map";
 
 Engine::PromiseState::~PromiseState() {
@@ -27,7 +26,7 @@ Engine::PromiseState::~PromiseState() {
   result_refs.clear();
 }
 
-Engine::Engine() = default;
+Engine::Engine() : renderer_(MakeRendererBackend()) {}
 
 bool Engine::Init() {
   log::Info("engine", "initializing");
@@ -35,7 +34,7 @@ bool Engine::Init() {
   factory_.Start();
   log::Debug("engine", "worker factory started");
 
-  if (!renderer_.Init()) {
+  if (!renderer_ || !renderer_->Init()) {
     log::Error("engine", "renderer initialization failed");
     return false;
   }
@@ -66,7 +65,9 @@ Engine::~Engine() {
     mixer_.Fini();
   }
 
-  renderer_.Fini();
+  if (renderer_) {
+    renderer_->Fini();
+  }
 }
 
 bool Engine::InitLua() {
@@ -77,16 +78,15 @@ bool Engine::InitLua() {
   }
   luaL_openlibs(L_);
 
-  RegisterLuaTypes(L_);
-  RegisterBindings(L_);
-
   lua_getfield(L_, LUA_REGISTRYINDEX, "_PRELOAD");
-  lua_pushcfunction(L_, [](lua_State *L) {
-    lua_getfield(L, LUA_REGISTRYINDEX, LIBRARY_REGKEY);
+  lua::PushFunction(L_, [this](lua_State *L) {
+    RegisterLuaTypes(L);
+    RegisterBindings(L);
+
     return 1;
   });
   lua_setfield(L_, -2, "luna");
-  lua_pop(L_, -1);
+  lua_pop(L_, 1);
 
   return true;
 }
@@ -131,7 +131,7 @@ void Engine::RegisterBindings(lua_State *L) {
       [](lua_State *L) {
         Engine *e =
             static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(L, e, e->renderer_.MakeLoadImageJob());
+        return L_StartAsyncJob(L, e, e->renderer_->MakeLoadImageJob());
       },
       1);
   lua_setfield(L, -2, "load_image");
@@ -142,7 +142,7 @@ void Engine::RegisterBindings(lua_State *L) {
       [](lua_State *L) {
         Engine *e =
             static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(L, e, e->renderer_.MakeLoadFontfaceJob());
+        return L_StartAsyncJob(L, e, e->renderer_->MakeLoadFontfaceJob());
       },
       1);
   lua_setfield(L, -2, "load_fontface");
@@ -158,11 +158,18 @@ void Engine::RegisterBindings(lua_State *L) {
       1);
   lua_setfield(L, -2, "load_audio");
 
-  renderer_.RegisterBindings(L);
+#if defined(TRACY_ENABLE)
+  lua_newtable(L);
+  lua_pushcfunction(L, tracy::detail::LuaZoneBeginN);
+  lua_setfield(L, -2, "begin_zone");
+  lua_pushcfunction(L, tracy::detail::LuaZoneEnd);
+  lua_setfield(L, -2, "end_zone");
+  lua_setfield(L, -2, "tracy");
+#endif
+
+  renderer_->RegisterBindings(L);
   mixer_.RegisterBindings(L);
   vfs_.RegisterBindings(L);
-
-  lua_setfield(L, LUA_REGISTRYINDEX, LIBRARY_REGKEY);
 }
 
 void Engine::RegisterLuaTypes(lua_State *L) {
@@ -187,7 +194,7 @@ bool Engine::CallLuaMain(const std::string &entry_path) {
   log::Info("engine", "loading Lua entry '{}'", entry_path);
   if (luaL_dofile(L_, entry_path.c_str()) != 0) {
     log::Error("engine", "Lua error while loading '{}': {}", entry_path,
-               lua_tostring(L_, -1));
+        lua_tostring(L_, -1));
     lua_pop(L_, 1);
     return false;
   }
@@ -195,30 +202,31 @@ bool Engine::CallLuaMain(const std::string &entry_path) {
   return true;
 }
 
-void Engine::Run(const std::string &entry_path) {
-  if (!CallLuaMain(entry_path))
-    return;
+bool Engine::Run(const std::string &entry_path) {
+  if (!CallLuaMain(entry_path)) {
+    return false;
+  }
 
   log::Info("engine", "entering main loop");
   auto last = std::chrono::steady_clock::now();
 
   while (alive_task_count_ > 0) {
-    if (!renderer_.BeginFrame(L_)) {
+    if (!renderer_->BeginFrame(L_)) {
       log::Error("engine", "renderer failed: {}",
-                 renderer_.GetFatalError().empty() ? "unknown renderer error"
-                                                   : renderer_.GetFatalError());
-      renderer_.Fini();
+          renderer_->GetFatalError().empty() ? "unknown renderer error"
+                                             : renderer_->GetFatalError());
+      renderer_->Fini();
       alive_task_count_ = 0;
       break;
     }
     DrainPromiseCompletions();
     SignalExpiredTimers();
     Tick();
-    if (!renderer_.EndFrame()) {
+    if (!renderer_->EndFrame()) {
       log::Error("engine", "renderer failed: {}",
-                 renderer_.GetFatalError().empty() ? "unknown renderer error"
-                                                   : renderer_.GetFatalError());
-      renderer_.Fini();
+          renderer_->GetFatalError().empty() ? "unknown renderer error"
+                                             : renderer_->GetFatalError());
+      renderer_->Fini();
       alive_task_count_ = 0;
       break;
     }
@@ -242,6 +250,7 @@ void Engine::Run(const std::string &entry_path) {
   }
 
   log::Info("engine", "main loop exited");
+  return !renderer_->HasFatalError();
 }
 
 void Engine::DrainPromiseCompletions() {
@@ -257,8 +266,8 @@ void Engine::DrainPromiseCompletions() {
     if (job->Rejected()) {
       promise->settlement = PromiseState::Settlement::REJECTED;
       promise->error = job->GetError();
-      log::Warn("engine", "async job {} rejected: {}", promise_id,
-                promise->error);
+      log::Warn(
+          "engine", "async job {} rejected: {}", promise_id, promise->error);
     } else {
       promise->settlement = PromiseState::Settlement::FULFILLED;
       promise->completed_job = std::move(job);
@@ -580,9 +589,9 @@ int Engine::L_SetWindowSize(lua_State *L) {
     return luaL_error(
         L, "set_window_size: must be called before starting any coroutines");
   }
-  if (!e->renderer_.SetWindowSize(width, height)) {
-    return luaL_error(L, "set_window_size: failed to resize window: %s",
-                      SDL_GetError());
+  if (!e->renderer_->SetWindowSize(width, height)) {
+    return luaL_error(
+        L, "set_window_size: failed to resize window: %s", SDL_GetError());
   }
   return 0;
 }

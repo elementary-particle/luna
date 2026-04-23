@@ -31,36 +31,23 @@
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
-sk_sp<skgpu::VulkanMemoryAllocator>
-MakeVulkanMemoryAllocator(VkInstance instance, VkPhysicalDevice physical_device,
-                          VkDevice device,
-                          PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr,
-                          PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr);
+sk_sp<skgpu::VulkanMemoryAllocator> MakeVulkanMemoryAllocator(
+    VkInstance instance, VkPhysicalDevice physical_device, VkDevice device,
+    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr,
+    PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr);
 
-namespace luna {
+namespace luna::backend::skia {
 
-Renderer::Renderer() {}
+SkiaRenderer::SkiaRenderer() {}
 
-void Renderer::SetFatalError(std::string message) {
+void SkiaRenderer::SetFatalError(std::string message) {
   fatal_error_ = true;
   fatal_error_message_ = std::move(message);
   log::Error("renderer", "fatal: {}", fatal_error_message_);
 }
 
-bool Renderer::Init() {
-  log::Info("renderer", "initializing SDL video/audio/events");
-  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS)) {
-    log::Error("renderer", "SDL_Init failed: {}", SDL_GetError());
-    return false;
-  }
-  sdl_ready_ = true;
-
-  SDL_WindowFlags window_flags =
-      SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-  window_ =
-      SDL_CreateWindow("Luna", window_width_, window_height_, window_flags);
-  if (!window_) {
-    log::Error("renderer", "SDL_CreateWindow failed: {}", SDL_GetError());
+bool SkiaRenderer::Init() {
+  if (!InitSdl(SDL_WINDOW_VULKAN)) {
     return false;
   }
 
@@ -75,24 +62,20 @@ bool Renderer::Init() {
   }
 
   log::Info("renderer",
-            "window created size={}x{} canvas={}x{} scale={:.2f}x{:.2f}",
-            window_width_,
-            window_height_,
-            canvas_width_,
-            canvas_height_,
-            canvas_scale_x_,
-            canvas_scale_y_);
+      "window created size={}x{} canvas={}x{} scale={:.2f}x{:.2f}",
+      window_width_, window_height_, canvas_width_, canvas_height_,
+      canvas_scale_x_, canvas_scale_y_);
 
   log::Info("renderer", "initialized window state; graphics init deferred");
   return true;
 }
 
 #if !defined(NDEBUG)
-static VKAPI_ATTR vk::Bool32 VKAPI_CALL
-DebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT message_severity,
-              vk::DebugUtilsMessageTypeFlagsEXT /*message_type*/,
-              const vk::DebugUtilsMessengerCallbackDataEXT *callback_data,
-              void * /*user_data*/) {
+static VKAPI_ATTR vk::Bool32 VKAPI_CALL DebugCallback(
+    vk::DebugUtilsMessageSeverityFlagBitsEXT message_severity,
+    vk::DebugUtilsMessageTypeFlagsEXT /*message_type*/,
+    const vk::DebugUtilsMessengerCallbackDataEXT *callback_data,
+    void * /*user_data*/) {
   log::Level level = log::Level::Warn;
   switch (message_severity) {
   case vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose:
@@ -113,7 +96,7 @@ DebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT message_severity,
 }
 #endif
 
-void Renderer::InitVulkan() {
+void SkiaRenderer::InitVulkan() {
   log::Info("renderer", "initializing Vulkan");
   VULKAN_HPP_DEFAULT_DISPATCHER.init();
   {
@@ -141,8 +124,7 @@ void Renderer::InitVulkan() {
     log::Debug("renderer", "created Vulkan instance");
 
 #if !defined NDEBUG
-    vk::DebugUtilsMessengerCreateInfoEXT create_info{
-        {},
+    vk::DebugUtilsMessengerCreateInfoEXT create_info{{},
         vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
             vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
             vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
@@ -183,7 +165,7 @@ void Renderer::InitVulkan() {
         if (mode == vk::PresentModeKHR::eMailbox) {
           present_mode = mode;
         } else if (mode == vk::PresentModeKHR::eFifo &&
-                   present_mode != vk::PresentModeKHR::eMailbox) {
+            present_mode != vk::PresentModeKHR::eMailbox) {
           present_mode = mode;
         }
       }
@@ -234,15 +216,14 @@ void Renderer::InitVulkan() {
     graphics_queue_ = device_.getQueue(device_caps_.queue_family_index, 0);
   }
   VULKAN_HPP_DEFAULT_DISPATCHER.init(device_);
-  log::Info("renderer",
-            "selected queue_family_index={} present_mode={}",
-            device_caps_.queue_family_index,
-            vk::to_string(device_caps_.present_mode));
+  log::Info("renderer", "selected queue_family_index={} present_mode={}",
+      device_caps_.queue_family_index,
+      vk::to_string(device_caps_.present_mode));
 
   CreateSwapchain();
 }
 
-void Renderer::CreateSwapchain() {
+void SkiaRenderer::CreateSwapchain() {
   // Get surface extent
   auto surface_caps = physical_device_.getSurfaceCapabilitiesKHR(surface_);
   if (surface_caps.currentExtent.height !=
@@ -250,11 +231,9 @@ void Renderer::CreateSwapchain() {
     surface_extent_ = surface_caps.currentExtent;
   } else {
     surface_extent_.width = std::clamp(static_cast<uint32_t>(canvas_width_),
-                                       surface_caps.minImageExtent.width,
-                                       surface_caps.maxImageExtent.width);
+        surface_caps.minImageExtent.width, surface_caps.maxImageExtent.width);
     surface_extent_.height = std::clamp(static_cast<uint32_t>(canvas_height_),
-                                        surface_caps.minImageExtent.height,
-                                        surface_caps.maxImageExtent.height);
+        surface_caps.minImageExtent.height, surface_caps.maxImageExtent.height);
   }
 
   // Create swapchain
@@ -266,9 +245,9 @@ void Renderer::CreateSwapchain() {
   swapchain_info.imageExtent = surface_extent_;
   swapchain_info.imageArrayLayers = 1;
   swapchain_info.imageUsage = vk::ImageUsageFlagBits::eTransferSrc |
-                              vk::ImageUsageFlagBits::eTransferDst |
-                              vk::ImageUsageFlagBits::eInputAttachment |
-                              vk::ImageUsageFlagBits::eColorAttachment;
+      vk::ImageUsageFlagBits::eTransferDst |
+      vk::ImageUsageFlagBits::eInputAttachment |
+      vk::ImageUsageFlagBits::eColorAttachment;
   swapchain_info.imageSharingMode = vk::SharingMode::eExclusive;
 
   swapchain_info.preTransform = surface_caps.currentTransform;
@@ -279,11 +258,8 @@ void Renderer::CreateSwapchain() {
   swapchain_ = device_.createSwapchainKHR(swapchain_info);
   swapchain_images_ = device_.getSwapchainImagesKHR(swapchain_);
   image_count_ = swapchain_images_.size();
-  log::Info("renderer",
-            "created swapchain extent={}x{} images={}",
-            surface_extent_.width,
-            surface_extent_.height,
-            image_count_);
+  log::Info("renderer", "created swapchain extent={}x{} images={}",
+      surface_extent_.width, surface_extent_.height, image_count_);
 
   swapchain_image_views_.resize(image_count_);
   // Create swapchain image views
@@ -305,20 +281,18 @@ void Renderer::CreateSwapchain() {
 
   texture_info_ = {
       static_cast<VkSampleCountFlagBits>(vk::SampleCountFlagBits::e1),
-      skgpu::Mipmapped::kNo,
-      0,
+      skgpu::Mipmapped::kNo, 0,
       static_cast<VkFormat>(vk::Format::eR8G8B8A8Unorm),
       static_cast<VkImageTiling>(vk::ImageTiling::eOptimal),
       static_cast<VkImageUsageFlags>(vk::ImageUsageFlagBits::eTransferSrc |
-                                     vk::ImageUsageFlagBits::eTransferDst |
-                                     vk::ImageUsageFlagBits::eInputAttachment |
-                                     vk::ImageUsageFlagBits::eColorAttachment),
+          vk::ImageUsageFlagBits::eTransferDst |
+          vk::ImageUsageFlagBits::eInputAttachment |
+          vk::ImageUsageFlagBits::eColorAttachment),
       static_cast<VkSharingMode>(vk::SharingMode::eExclusive),
-      static_cast<VkImageAspectFlags>(vk::ImageAspectFlagBits::eColor),
-      {}};
+      static_cast<VkImageAspectFlags>(vk::ImageAspectFlagBits::eColor), {}};
 }
 
-void Renderer::InitSkia() {
+void SkiaRenderer::InitSkia() {
   skgpu::VulkanBackendContext vk_context;
   vk_context.fInstance = vk_instance_;
   vk_context.fPhysicalDevice = physical_device_;
@@ -326,9 +300,8 @@ void Renderer::InitSkia() {
   vk_context.fQueue = graphics_queue_;
   vk_context.fGraphicsQueueIndex = device_caps_.queue_family_index;
   vk_context.fMaxAPIVersion = vk::ApiVersion13;
-  vk_context.fGetProc = [](const char *name,
-                           VkInstance instance,
-                           VkDevice device) {
+  vk_context.fGetProc = [](const char *name, VkInstance instance,
+                            VkDevice device) {
     PFN_vkVoidFunction p = nullptr;
     if (device != VK_NULL_HANDLE) {
       p = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr(device, name);
@@ -338,12 +311,10 @@ void Renderer::InitSkia() {
     }
     return p;
   };
-  vk_context.fMemoryAllocator = MakeVulkanMemoryAllocator(
-      vk_instance_,
-      physical_device_,
-      device_,
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr,
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr);
+  vk_context.fMemoryAllocator =
+      MakeVulkanMemoryAllocator(vk_instance_, physical_device_, device_,
+          VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr,
+          VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr);
 
   skgpu::graphite::ContextOptions options = {};
 
@@ -361,7 +332,7 @@ void Renderer::InitSkia() {
   log::Info("renderer", "Skia initialized");
 }
 
-void Renderer::FiniSkia() {
+void SkiaRenderer::FiniSkia() {
   sk_recorder_.reset();
   if (sk_context_) {
     sk_context_->submit(skgpu::graphite::SyncToCpu::kYes);
@@ -372,7 +343,7 @@ void Renderer::FiniSkia() {
   }
 }
 
-void Renderer::DestroySwapchain() {
+void SkiaRenderer::DestroySwapchain() {
   if (!device_ || !swapchain_) {
     surface_extent_ = vk::Extent2D{};
     return;
@@ -403,7 +374,7 @@ void Renderer::DestroySwapchain() {
   image_count_ = 0;
 }
 
-void Renderer::Fini() {
+void SkiaRenderer::Fini() {
   frame_active_ = false;
 
   if (sk_context_ || sk_recorder_) {
@@ -439,18 +410,10 @@ void Renderer::Fini() {
   }
   graphics_ready_ = false;
 
-  if (window_) {
-    SDL_DestroyWindow(window_);
-    window_ = nullptr;
-  }
-
-  if (sdl_ready_) {
-    SDL_Quit();
-    sdl_ready_ = false;
-  }
+  FiniSdl();
 }
 
-bool Renderer::BeginFrame(lua_State *L) {
+bool SkiaRenderer::BeginFrame(lua_State *L) {
   ZoneScopedN("BeginFrame");
   frame_active_ = false;
   PumpSdlEvents();
@@ -467,35 +430,34 @@ bool Renderer::BeginFrame(lua_State *L) {
   }
 
   SkCanvas *sk = sk_recorder_->makeDeferredCanvas(
-      SkImageInfo::Make(surface_extent_.width,
-                        surface_extent_.height,
-                        kRGBA_8888_SkColorType,
-                        kPremul_SkAlphaType),
+      SkImageInfo::Make(surface_extent_.width, surface_extent_.height,
+          kRGBA_8888_SkColorType, kPremul_SkAlphaType),
       skgpu::graphite::TextureInfos::MakeVulkan(texture_info_));
   if (!sk) {
     SetFatalError("failed to create deferred canvas");
     return false;
   }
-  sk->scale(SkFloatToScalar(canvas_scale_x_), SkFloatToScalar(canvas_scale_y_));
+  sk->setMatrix(window_to_surface_matrix_);
 
   lua_rawgeti(L, LUA_REGISTRYINDEX, window_canvas_ref_);
   if (!lua_isnil(L, -1)) {
-    LCanvas *canvas = static_cast<LCanvas *>(lua_touserdata(L, -1));
+    Canvas *canvas = static_cast<Canvas *>(lua_touserdata(L, -1));
     canvas->set_font_manager(font_mgr_);
     canvas->set_sk(sk);
+    canvas->set_window_to_surface_matrix(window_to_surface_matrix_);
   }
   lua_pop(L, 1);
   frame_active_ = true;
   return true;
 }
 
-bool Renderer::EndFrame() {
+bool SkiaRenderer::EndFrame() {
   ZoneScopedN("EndFrame");
   if (!frame_active_) {
     return !fatal_error_;
   }
 
-  std::unique_ptr<skgpu::graphite::Recording> recording = sk_recorder_->snap();
+  auto recording = sk_recorder_->snap();
   if (!recording) {
     SetFatalError("failed to snap Skia recording");
     frame_active_ = false;
@@ -514,9 +476,8 @@ bool Renderer::EndFrame() {
       swapchain_, std::numeric_limits<uint64_t>::max(), acquired);
   if (next_index.result == vk::Result::eTimeout ||
       next_index.result == vk::Result::eNotReady) {
-    log::Warn("renderer",
-              "acquireNextImageKHR returned {}",
-              vk::to_string(next_index.result));
+    log::Warn("renderer", "acquireNextImageKHR returned {}",
+        vk::to_string(next_index.result));
     frame_active_ = false;
     return true;
   }
@@ -525,8 +486,8 @@ bool Renderer::EndFrame() {
     if (next_index.result == vk::Result::eErrorOutOfDateKHR) {
       swapchain_dirty_ = true;
     }
-    SetFatalError(fmt::format("acquireNextImageKHR failed: {}",
-                              vk::to_string(next_index.result)));
+    SetFatalError(fmt::format(
+        "acquireNextImageKHR failed: {}", vk::to_string(next_index.result)));
     frame_active_ = false;
     return false;
   }
@@ -537,25 +498,19 @@ bool Renderer::EndFrame() {
 
   vk::Image next_image = swapchain_images_[image_index_];
   SkSurfaceProps props{};
-  sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(
-      sk_recorder_.get(),
+  sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(sk_recorder_.get(),
       skgpu::graphite::BackendTextures::MakeVulkan(
           {static_cast<int32_t>(surface_extent_.width),
-           static_cast<int32_t>(surface_extent_.height)},
+              static_cast<int32_t>(surface_extent_.height)},
           texture_info_,
           static_cast<VkImageLayout>(vk::ImageLayout::eUndefined),
-          vk::QueueFamilyIgnored,
-          next_image,
-          {}),
-      nullptr,
-      &props);
+          vk::QueueFamilyIgnored, next_image, {}),
+      nullptr, &props);
 
   if (!surface) {
     SetFatalError(fmt::format(
         "failed to wrap Skia backend texture image_index={} extent={}x{}",
-        image_index_,
-        surface_extent_.width,
-        surface_extent_.height));
+        image_index_, surface_extent_.width, surface_extent_.height));
     frame_active_ = false;
     return false;
   }
@@ -587,7 +542,7 @@ bool Renderer::EndFrame() {
         }
       });
   recording_info.fFinishedProc = [](skgpu::graphite::GpuFinishedContext ctx,
-                                    skgpu::CallbackResult) {
+                                     skgpu::CallbackResult) {
     auto *callback = reinterpret_cast<std::function<void()> *>(ctx);
     (*callback)();
     delete callback;
@@ -611,8 +566,7 @@ bool Renderer::EndFrame() {
       swapchain_dirty_ = true;
     }
     SetFatalError(fmt::format("presentKHR failed for image_index={}: {}",
-                              image_index_,
-                              vk::to_string(result)));
+        image_index_, vk::to_string(result)));
     frame_active_ = false;
     return false;
   }
@@ -624,46 +578,7 @@ bool Renderer::EndFrame() {
   return true;
 }
 
-void Renderer::PumpSdlEvents() {
-  SDL_Event e;
-  while (SDL_PollEvent(&e)) {
-    switch (e.type) {
-    case SDL_EVENT_QUIT:
-      polled_events_.push_back(PolledEvent{"quit", std::nullopt, 0, 0});
-      break;
-    case SDL_EVENT_WINDOW_RESIZED:
-    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-    case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-      swapchain_dirty_ = true;
-      break;
-    case SDL_EVENT_MOUSE_MOTION:
-      polled_events_.push_back(PolledEvent{
-          "mouse_move", std::nullopt, (int)e.motion.x, (int)e.motion.y});
-      break;
-    case SDL_EVENT_MOUSE_BUTTON_DOWN:
-    case SDL_EVENT_MOUSE_BUTTON_UP: {
-      std::optional<std::string> button;
-      if (e.button.button == SDL_BUTTON_LEFT) {
-        button = "left";
-      } else if (e.button.button == SDL_BUTTON_RIGHT) {
-        button = "right";
-      } else if (e.button.button == SDL_BUTTON_MIDDLE) {
-        button = "middle";
-      }
-      polled_events_.push_back(PolledEvent{
-          e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? "mouse_down" : "mouse_up",
-          button,
-          (int)e.button.x,
-          (int)e.button.y});
-      break;
-    }
-    default:
-      break;
-    }
-  }
-}
-
-bool Renderer::UpdateWindowMetrics(bool *changed) {
+bool SkiaRenderer::UpdateWindowMetrics(bool *changed) {
   if (changed) {
     *changed = false;
   }
@@ -688,19 +603,15 @@ bool Renderer::UpdateWindowMetrics(bool *changed) {
 
   if (window_width <= 0 || window_height <= 0 || canvas_width <= 0 ||
       canvas_height <= 0) {
-    log::Warn(
-        "renderer",
+    log::Warn("renderer",
         "ignoring non-positive window/canvas size window={}x{} canvas={}x{}",
-        window_width,
-        window_height,
-        canvas_width,
-        canvas_height);
+        window_width, window_height, canvas_width, canvas_height);
     return false;
   }
 
-  const bool metrics_changed =
-      window_width_ != window_width || window_height_ != window_height ||
-      canvas_width_ != canvas_width || canvas_height_ != canvas_height;
+  const bool metrics_changed = window_width_ != window_width ||
+      window_height_ != window_height || canvas_width_ != canvas_width ||
+      canvas_height_ != canvas_height;
 
   window_width_ = window_width;
   window_height_ = window_height;
@@ -710,6 +621,8 @@ bool Renderer::UpdateWindowMetrics(bool *changed) {
       static_cast<float>(canvas_width_) / static_cast<float>(window_width_);
   canvas_scale_y_ =
       static_cast<float>(canvas_height_) / static_cast<float>(window_height_);
+  window_to_surface_matrix_ =
+      SkMatrix::Scale(canvas_scale_x_, canvas_scale_y_);
 
   if (changed) {
     *changed = metrics_changed;
@@ -717,7 +630,7 @@ bool Renderer::UpdateWindowMetrics(bool *changed) {
   return true;
 }
 
-bool Renderer::EnsureGraphicsReady() {
+bool SkiaRenderer::EnsureGraphicsReady() {
   if (fatal_error_) {
     return false;
   }
@@ -738,7 +651,7 @@ bool Renderer::EnsureGraphicsReady() {
   return true;
 }
 
-void Renderer::RecreateSwapchain() {
+void SkiaRenderer::RecreateSwapchain() {
   if (!UpdateWindowMetrics()) {
     return;
   }
@@ -755,20 +668,16 @@ void Renderer::RecreateSwapchain() {
   }
   swapchain_dirty_ = false;
   log::Info("renderer",
-            "recreated swapchain window={}x{} canvas={}x{} scale={:.2f}x{:.2f}",
-            window_width_,
-            window_height_,
-            canvas_width_,
-            canvas_height_,
-            canvas_scale_x_,
-            canvas_scale_y_);
+      "recreated swapchain window={}x{} canvas={}x{} scale={:.2f}x{:.2f}",
+      window_width_, window_height_, canvas_width_, canvas_height_,
+      canvas_scale_x_, canvas_scale_y_);
 }
 
-std::unique_ptr<AsyncJob> Renderer::MakeLoadImageJob() {
+std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadImageJob() {
   return std::make_unique<LoadImageJob>(sk_recorder_.get());
 }
 
-void Renderer::LoadImageJob::Invoke(lua_State *L) {
+void SkiaRenderer::LoadImageJob::Invoke(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
   if (!path || !*path) {
     luaL_error(L, "load_image: path is empty");
@@ -780,7 +689,7 @@ void Renderer::LoadImageJob::Invoke(lua_State *L) {
   }
 }
 
-void Renderer::LoadImageJob::Run() {
+void SkiaRenderer::LoadImageJob::Run() {
   ZoneScopedN("LoadImage");
   std::unique_ptr<SkCodec> codec = SkCodec::MakeFromStream(std::move(file_));
   if (!codec) {
@@ -796,10 +705,10 @@ void Renderer::LoadImageJob::Run() {
   }
 }
 
-int Renderer::LoadImageJob::Finish(lua_State *L) {
+int SkiaRenderer::LoadImageJob::Finish(lua_State *L) {
   ZoneScopedN("FinishLoadImage");
   image_ = SkImages::TextureFromImage(recorder_, image_);
-  auto *image = lua::New<LImage>(L, std::move(image_));
+  auto *image = lua::New<Image>(L, std::move(image_));
 
   lua_pushnumber(L, image->sk->width());
   lua_pushnumber(L, image->sk->height());
@@ -807,25 +716,15 @@ int Renderer::LoadImageJob::Finish(lua_State *L) {
   return 3;
 }
 
-std::unique_ptr<AsyncJob> Renderer::MakeLoadFontfaceJob() {
+std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadFontfaceJob() {
   return std::make_unique<LoadFontfaceJob>(font_mgr_);
 }
 
-void Renderer::LoadFontfaceJob::Invoke(lua_State *L) {
+void SkiaRenderer::LoadFontfaceJob::Invoke(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
 
   if (!path || !*path)
     luaL_error(L, "register_font: path is empty");
-
-  luaL_checktype(L, 2, LUA_TTABLE);
-  lua_getfield(L, 2, "family");
-  const char *family = luaL_checkstring(L, -1);
-  if (!family || !*family) {
-    lua_pop(L, 1);
-    luaL_error(L, "register_font: family is required");
-  }
-  family_ = family;
-  lua_pop(L, 1);
 
   path_ = path;
   file_ = SkStreamAsset::MakeFromFile(path);
@@ -834,42 +733,18 @@ void Renderer::LoadFontfaceJob::Invoke(lua_State *L) {
   }
 }
 
-void Renderer::LoadFontfaceJob::Run() {
+void SkiaRenderer::LoadFontfaceJob::Run() {
   ZoneScopedN("LoadFontface");
-  if (!font_mgr_ ||
-      !RegisterRuntimeFont(font_mgr_, std::move(file_), family_.c_str())) {
-    error_ = fmt::format(
-        "failed to register font '{}' as family '{}'", path_, family_);
+  if (!font_mgr_ || !RegisterRuntimeFont(font_mgr_, std::move(file_))) {
+    error_ = fmt::format("failed to register font '{}'", path_);
   }
 }
 
-int Renderer::LoadFontfaceJob::Finish(lua_State *L) { return 0; }
+int SkiaRenderer::LoadFontfaceJob::Finish(lua_State *L) { return 0; }
 
-int Renderer::L_PollSdlEvents(lua_State *L) {
-  Renderer *r = static_cast<Renderer *>(lua_touserdata(L, lua_upvalueindex(1)));
-  lua_newtable(L);
-  int out_i = 1;
-  for (const PolledEvent &ev : r->polled_events_) {
-    lua_newtable(L);
-    lua_pushstring(L, ev.type.c_str());
-    lua_setfield(L, -2, "type");
-    if (ev.button.has_value()) {
-      lua_pushstring(L, ev.button->c_str());
-      lua_setfield(L, -2, "button");
-    }
-    lua_pushinteger(L, ev.x);
-    lua_setfield(L, -2, "x");
-    lua_pushinteger(L, ev.y);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, out_i);
-    out_i++;
-  }
-  r->polled_events_.clear();
-  return 1;
-}
-
-int Renderer::L_MakeCanvas(lua_State *L) {
-  Renderer *r = static_cast<Renderer *>(lua_touserdata(L, lua_upvalueindex(1)));
+int SkiaRenderer::L_MakeCanvas(lua_State *L) {
+  SkiaRenderer *r =
+      static_cast<SkiaRenderer *>(lua_touserdata(L, lua_upvalueindex(1)));
   int width = static_cast<int>(luaL_checkinteger(L, 1));
   int height = static_cast<int>(luaL_checkinteger(L, 2));
 
@@ -877,31 +752,30 @@ int Renderer::L_MakeCanvas(lua_State *L) {
     return luaL_error(L, "make_canvas: width and height must be positive");
   }
 
-  sk_sp<SkSurface> surface = SkSurfaces::RenderTarget(
-      r->sk_recorder_.get(),
+  sk_sp<SkSurface> surface = SkSurfaces::RenderTarget(r->sk_recorder_.get(),
       SkImageInfo::Make(
           width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType));
   if (!surface) {
     return luaL_error(L, "make_canvas: failed to create render target");
   }
 
-  LCanvas *canvas = lua::New<LCanvas>(L);
+  Canvas *canvas = lua::New<Canvas>(L);
   canvas->set_font_manager(r->font_mgr_);
   canvas->set_surface(surface);
   return 1;
 }
 
-void Renderer::RegisterBindings(lua_State *L) {
-  if (lua::NewType<LImage>(L)) {
+void SkiaRenderer::RegisterBindings(lua_State *L) {
+  if (lua::NewType<Image>(L)) {
     lua_pushcfunction(L, [](lua_State *L) {
-      LImage *image = lua::Check<LImage>(L, 1);
+      Image *image = lua::Check<Image>(L, 1);
       image->sk.reset();
       return 0;
     });
     lua_setfield(L, -2, "destroy");
   }
   lua_pop(L, 1);
-  LCanvas::RegisterBindings(L);
+  LCanvas<Backend>::Bind(L);
 
   lua_pushlightuserdata(L, this);
   lua_pushcclosure(L, &L_PollSdlEvents, 1);
@@ -911,14 +785,14 @@ void Renderer::RegisterBindings(lua_State *L) {
   lua_pushcclosure(L, &L_MakeCanvas, 1);
   lua_setfield(L, -2, "make_canvas");
 
-  lua::New<LCanvas>(L);
-  lua::Check<LCanvas>(L, -1)->set_font_manager(font_mgr_);
+  lua::New<Canvas>(L);
+  lua::Check<Canvas>(L, -1)->set_font_manager(font_mgr_);
   lua_pushvalue(L, -1);
   window_canvas_ref_ = luaL_ref(L, LUA_REGISTRYINDEX);
   lua_setfield(L, -2, "window");
 }
 
-bool Renderer::SetWindowSize(int width, int height) {
+bool SkiaRenderer::SetWindowSize(int width, int height) {
   if (width <= 0 || height <= 0) {
     return false;
   }
@@ -929,6 +803,7 @@ bool Renderer::SetWindowSize(int width, int height) {
     canvas_height_ = height;
     canvas_scale_x_ = 1.0f;
     canvas_scale_y_ = 1.0f;
+    window_to_surface_matrix_ = SkMatrix::I();
     return true;
   }
 
@@ -945,14 +820,10 @@ bool Renderer::SetWindowSize(int width, int height) {
   }
 
   log::Info("renderer",
-            "window size set to {}x{} canvas={}x{} scale={:.2f}x{:.2f}",
-            window_width_,
-            window_height_,
-            canvas_width_,
-            canvas_height_,
-            canvas_scale_x_,
-            canvas_scale_y_);
+      "window size set to {}x{} canvas={}x{} scale={:.2f}x{:.2f}",
+      window_width_, window_height_, canvas_width_, canvas_height_,
+      canvas_scale_x_, canvas_scale_y_);
   return true;
 }
 
-} // namespace luna
+} // namespace luna::backend::skia

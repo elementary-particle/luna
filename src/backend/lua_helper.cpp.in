@@ -1,0 +1,5 @@
+namespace luna::backend {
+const char *CanvasHelper = R"(
+@BACKEND_HELPER_LUA@
+)";
+}

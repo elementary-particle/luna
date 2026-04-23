@@ -1,0 +1,58 @@
+diff --git a/include/private/base/SkASAN.h b/include/private/base/SkASAN.h
+index 095f716..babf6c9 100644
+--- a/include/private/base/SkASAN.h
++++ b/include/private/base/SkASAN.h
+@@ -10,14 +10,6 @@
+ 
+ #include <cstddef>
+ 
+-#ifdef __SANITIZE_ADDRESS__
+-    #define SK_SANITIZE_ADDRESS 1
+-#endif
+-#if !defined(SK_SANITIZE_ADDRESS) && defined(__has_feature)
+-    #if __has_feature(address_sanitizer)
+-        #define SK_SANITIZE_ADDRESS 1
+-    #endif
+-#endif
+ 
+ // Typically declared in LLVM's asan_interface.h.
+ #ifdef SK_SANITIZE_ADDRESS
+ 
+diff --git a/src/base/SkNoDestructor.h b/src/base/SkNoDestructor.h
+index 5b0f5e2..0de09f3 100644
+--- a/src/base/SkNoDestructor.h
++++ b/src/base/SkNoDestructor.h
+@@ -118,20 +118,6 @@ public:
+ private:
+     alignas(T) std::byte fStorage[sizeof(T)];
+ 
+-#if defined(__clang__) && defined(__has_feature)
+-#if __has_feature(leak_sanitizer) || __has_feature(address_sanitizer)
+-    // TODO(https://crbug.com/812277): This is a hack to work around the fact that LSan doesn't seem
+-    // to treat SkNoDestructor as a root for reachability analysis. This means that code like this:
+-    //     static SkNoDestructor<std::vector<int>> v({1, 2, 3});
+-    // is considered a leak. Using the standard leak sanitizer annotations to suppress leaks doesn't
+-    // work: std::vector is implicitly constructed before calling the SkNoDestructor constructor.
+-    //
+-    // Unfortunately, I haven't been able to demonstrate this issue in simpler reproductions: until
+-    // that's resolved, hold an explicit pointer to the placement-new'd object in leak sanitizer
+-    // mode to help LSan realize that objects allocated by the contained type are still reachable.
+-    T* fStoragePtr = reinterpret_cast<T*>(fStorage);
+-#endif  // leak_sanitizer/address_sanitizer
+-#endif  // __has_feature
+ };
+ 
+ #endif  // SkNoDestructor_DEFINED
+ 
+diff --git a/BUILD.gn b/BUILD.gn
+index 135e2b1..54202d4 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -95,7 +95,6 @@ config("skia_private") {
+   if (is_skia_dev_build && !is_wasm) {
+     defines += [
+       "SK_ALLOW_STATIC_GLOBAL_INITIALIZERS=1",
+-      "GPU_TEST_UTILS=1",
+     ]
+   }
+   libs = []

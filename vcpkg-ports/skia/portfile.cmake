@@ -7,6 +7,7 @@ vcpkg_from_github(
     SHA512 ea9ebab3baf3f50277bd1406b6b5cd28df75fe9fa6586f6022cb08f229fc86bedd84192564f0d3b9a6013cda8e92874c070bf1fef9f3ed2d6a7433a0d713d6af
     PATCHES
         # disable-dev-test.patch
+        asan-explicit-opt-in.patch
         bentleyottmann-build.patch
         graphite.patch
         graphite-vulkan-export-fix.patch

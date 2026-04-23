@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "lua_util.hpp"
+
 namespace luna {
 
 static constexpr const char *VFS_PTR_KEY = "luna.vfs_ptr";

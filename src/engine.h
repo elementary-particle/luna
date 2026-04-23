@@ -1,7 +1,7 @@
 #ifndef LUNA_ENGINE_H
 #define LUNA_ENGINE_H
 
-#include "lua.hpp"
+#include "lua_util.hpp"
 
 #include <chrono>
 #include <deque>
@@ -13,7 +13,8 @@
 
 #include "factory.h"
 #include "mixer.h"
-#include "renderer.h"
+#include "renderer_factory.h"
+#include "renderer_interface.h"
 #include "vfs.h"
 
 namespace luna {
@@ -63,7 +64,7 @@ public:
   ~Engine();
 
   bool Init();
-  void Run(const std::string &entry_path = "main.lua");
+  bool Run(const std::string &entry_path = "main.lua");
 
   std::shared_ptr<EventState> CreateEvent() const;
   void SignalEvent(const std::shared_ptr<EventState> &event);
@@ -105,7 +106,7 @@ private:
     std::shared_ptr<PromiseState> state;
   };
 
-  Renderer renderer_;
+  std::unique_ptr<Renderer> renderer_;
   Mixer mixer_;
   VFS vfs_;
 
@@ -160,8 +161,8 @@ private:
   static int L_PromiseTake(lua_State *L);
   static int L_PromiseEvent(lua_State *L);
 
-  static inline int L_StartAsyncJob(lua_State *L, Engine *e,
-                                    std::unique_ptr<AsyncJob> &&job) {
+  static inline int L_StartAsyncJob(
+      lua_State *L, Engine *e, std::unique_ptr<AsyncJob> &&job) {
     job->Invoke(L);
 
     const PromiseId promise_id = e->factory_.EnqueueJob(std::move(job));

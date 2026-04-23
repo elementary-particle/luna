@@ -1,4 +1,4 @@
-#include "font_manager.h"
+#include "skia/font_manager.h"
 
 #include <memory>
 #include <mutex>
@@ -17,7 +17,7 @@
 #include <skia/ports/SkFontMgr_empty.h>
 #include <skia/ports/SkFontScanner_FreeType.h>
 
-namespace luna {
+namespace luna::backend::skia {
 namespace {
 
 class RegisteredFontStyleSet final : public SkFontStyleSet {
@@ -27,8 +27,8 @@ public:
     SkFontStyle style;
   };
 
-  RegisteredFontStyleSet(SkString family_name,
-                         std::vector<RegisteredTypeface> entries)
+  RegisteredFontStyleSet(
+      SkString family_name, std::vector<RegisteredTypeface> entries)
       : family_name_(std::move(family_name)), entries_(std::move(entries)) {}
 
   int count() override { return static_cast<int>(entries_.size()); }
@@ -67,9 +67,8 @@ public:
       : loader_(SkFontMgr_New_Custom_Empty()),
         scanner_(SkFontScanner_Make_FreeType()) {}
 
-  bool RegisterFont(std::unique_ptr<SkStreamAsset> stream,
-                    const char family_name[]) {
-    if (!loader_ || !scanner_ || !stream || !family_name || !*family_name) {
+  bool RegisterFont(std::unique_ptr<SkStreamAsset> stream) {
+    if (!loader_ || !scanner_ || !stream) {
       return false;
     }
 
@@ -86,19 +85,13 @@ public:
       }
 
       for (int instance_index = 0; instance_index <= num_instances;
-           ++instance_index) {
+          ++instance_index) {
         SkString real_name;
         SkFontStyle style;
         bool is_fixed_pitch = false;
         SkFontScanner::VariationPosition position;
-        if (!scanner_->scanInstance(stream.get(),
-                                    face_index,
-                                    instance_index,
-                                    &real_name,
-                                    &style,
-                                    &is_fixed_pitch,
-                                    nullptr,
-                                    &position)) {
+        if (!scanner_->scanInstance(stream.get(), face_index, instance_index,
+                &real_name, &style, &is_fixed_pitch, nullptr, &position)) {
           continue;
         }
 
@@ -120,7 +113,7 @@ public:
           continue;
         }
 
-        registered_any |= RegisterTypeface(typeface, family_name, style);
+        registered_any |= RegisterTypeface(typeface, style);
       }
     }
 
@@ -161,9 +154,8 @@ protected:
     return MakeStyleSetLocked(family_name);
   }
 
-  sk_sp<SkTypeface>
-  onMatchFamilyStyle(const char family_name[],
-                     const SkFontStyle &pattern) const override {
+  sk_sp<SkTypeface> onMatchFamilyStyle(
+      const char family_name[], const SkFontStyle &pattern) const override {
     sk_sp<SkFontStyleSet> style_set;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -175,9 +167,9 @@ protected:
     return style_set->matchStyle(pattern);
   }
 
-  sk_sp<SkTypeface> onMatchFamilyStyleCharacter(
-      const char family_name[], const SkFontStyle &style, const char *bcp47[],
-      int bcp47_count, SkUnichar character) const override {
+  sk_sp<SkTypeface> onMatchFamilyStyleCharacter(const char family_name[],
+      const SkFontStyle &style, const char *bcp47[], int bcp47_count,
+      SkUnichar character) const override {
     if (loader_) {
       return loader_->matchFamilyStyleCharacter(
           family_name, style, bcp47, bcp47_count, character);
@@ -185,41 +177,40 @@ protected:
     return nullptr;
   }
 
-  sk_sp<SkTypeface> onMakeFromData(sk_sp<SkData> data,
-                                   int ttc_index) const override {
+  sk_sp<SkTypeface> onMakeFromData(
+      sk_sp<SkData> data, int ttc_index) const override {
     if (!loader_) {
       return nullptr;
     }
     return loader_->makeFromData(std::move(data), ttc_index);
   }
 
-  sk_sp<SkTypeface> onMakeFromStreamIndex(std::unique_ptr<SkStreamAsset> stream,
-                                          int ttc_index) const override {
+  sk_sp<SkTypeface> onMakeFromStreamIndex(
+      std::unique_ptr<SkStreamAsset> stream, int ttc_index) const override {
     if (!loader_) {
       return nullptr;
     }
     return loader_->makeFromStream(std::move(stream), ttc_index);
   }
 
-  sk_sp<SkTypeface>
-  onMakeFromStreamArgs(std::unique_ptr<SkStreamAsset> stream,
-                       const SkFontArguments &args) const override {
+  sk_sp<SkTypeface> onMakeFromStreamArgs(std::unique_ptr<SkStreamAsset> stream,
+      const SkFontArguments &args) const override {
     if (!loader_) {
       return nullptr;
     }
     return loader_->makeFromStream(std::move(stream), args);
   }
 
-  sk_sp<SkTypeface> onMakeFromFile(const char path[],
-                                   int ttc_index) const override {
+  sk_sp<SkTypeface> onMakeFromFile(
+      const char path[], int ttc_index) const override {
     if (!loader_) {
       return nullptr;
     }
     return loader_->makeFromFile(path, ttc_index);
   }
 
-  sk_sp<SkTypeface> onLegacyMakeTypeface(const char family_name[],
-                                         SkFontStyle style) const override {
+  sk_sp<SkTypeface> onLegacyMakeTypeface(
+      const char family_name[], SkFontStyle style) const override {
     return this->onMatchFamilyStyle(family_name, style);
   }
 
@@ -234,13 +225,12 @@ private:
       return SkFontStyleSet::CreateEmpty();
     }
 
-    return sk_make_sp<RegisteredFontStyleSet>(it->second.name,
-                                              it->second.typefaces);
+    return sk_make_sp<RegisteredFontStyleSet>(
+        it->second.name, it->second.typefaces);
   }
 
-  bool RegisterTypeface(sk_sp<SkTypeface> typeface,
-                        const char family_name_override[],
-                        const SkFontStyle &style) const {
+  bool RegisterTypeface(
+      sk_sp<SkTypeface> typeface, const SkFontStyle &style) const {
     if (!typeface) {
       return false;
     }
@@ -248,10 +238,9 @@ private:
     std::lock_guard<std::mutex> lock(mutex_);
 
     SkString family_name;
-    if (family_name_override && *family_name_override) {
-      family_name = SkString(family_name_override);
-    } else {
-      typeface->getFamilyName(&family_name);
+    typeface->getFamilyName(&family_name);
+    if (family_name.isEmpty()) {
+      return false;
     }
 
     FamilyEntry &entry = families_[family_name.c_str()];
@@ -260,7 +249,7 @@ private:
       family_names_.push_back(family_name);
     }
     for (const RegisteredFontStyleSet::RegisteredTypeface &registered :
-         entry.typefaces) {
+        entry.typefaces) {
       if (registered.typeface->uniqueID() == typeface->uniqueID() &&
           registered.style == style) {
         return true;
@@ -288,14 +277,13 @@ sk_sp<SkFontMgr> MakeRuntimeFontManager() {
   return sk_make_sp<RuntimeFontManager>();
 }
 
-bool RegisterRuntimeFont(const sk_sp<SkFontMgr> &font_mgr,
-                         std::unique_ptr<SkStreamAsset> stream,
-                         const char family_name[]) {
+bool RegisterRuntimeFont(
+    const sk_sp<SkFontMgr> &font_mgr, std::unique_ptr<SkStreamAsset> stream) {
   if (!font_mgr) {
     return false;
   }
   return static_cast<RuntimeFontManager *>(font_mgr.get())
-      ->RegisterFont(std::move(stream), family_name);
+      ->RegisterFont(std::move(stream));
 }
 
-} // namespace luna
+} // namespace luna::backend::skia

@@ -1,8 +1,6 @@
 #ifndef LUNA_MIXER_H
 #define LUNA_MIXER_H
 
-#include "lua.hpp"
-
 #include "factory.h"
 
 #include <SDL3_mixer/SDL_mixer.h>
@@ -10,6 +8,8 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+
+#include "lua_util.hpp"
 
 namespace luna {
 
