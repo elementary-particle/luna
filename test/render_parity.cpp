@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <random>
 #include <stdexcept>
@@ -82,6 +83,11 @@ struct FuzzConfig {
   int ops_per_scene = kDefaultOpsPerScene;
   uint64_t base_seed = kDefaultBaseSeed;
 };
+
+std::string PathForMessage(const std::filesystem::path &path) {
+  const auto text = path.u8string();
+  return std::string(text.begin(), text.end());
+}
 
 template <typename Backend> struct ImageSize;
 
@@ -659,12 +665,39 @@ void WritePng(PixelBuffer const &buffer, const std::filesystem::path &path) {
       buffer.stride, BL_DATA_ACCESS_READ);
   if (result != BL_SUCCESS) {
     throw std::runtime_error(
-        fmt::format("failed to create image {}", path.string()));
+        fmt::format("failed to create image {}", PathForMessage(path)));
   }
-  result = image.write_to_file(path.c_str());
+
+  BLImageCodec codec;
+  result = codec.find_by_name("PNG");
+  if (result != BL_SUCCESS) {
+    throw std::runtime_error("failed to find PNG image codec");
+  }
+
+  BLArray<uint8_t> png;
+  result = image.write_to_data(png, codec);
   if (result != BL_SUCCESS) {
     throw std::runtime_error(
-        fmt::format("failed to write image {} to file", path.string()));
+        fmt::format("failed to encode image {}", PathForMessage(path)));
+  }
+
+  if (png.size() > static_cast<size_t>(
+                       std::numeric_limits<std::streamsize>::max())) {
+    throw std::runtime_error(
+        fmt::format("encoded image {} is too large", PathForMessage(path)));
+  }
+
+  std::ofstream file(path, std::ios::binary);
+  if (!file) {
+    throw std::runtime_error(
+        fmt::format("failed to open image {} for writing", PathForMessage(path)));
+  }
+
+  file.write(reinterpret_cast<const char *>(png.data()),
+      static_cast<std::streamsize>(png.size()));
+  if (!file) {
+    throw std::runtime_error(
+        fmt::format("failed to write image {} to file", PathForMessage(path)));
   }
 }
 
