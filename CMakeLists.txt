@@ -50,7 +50,7 @@ target_include_directories(luna PRIVATE src)
 
 set_target_properties(luna PROPERTIES OUTPUT_NAME "luna")
 
-target_compile_definitions(luna PRIVATE TRACY_ENABLE)
+target_compile_definitions(luna PRIVATE TRACY_ENABLE TRACY_VK_USE_SYMBOL_TABLE TRACY_ON_DEMAND)
 target_include_directories(luna PRIVATE vendor/tracy)
 
 if(LUNA_ENABLE_SANITIZERS)

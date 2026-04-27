@@ -68,6 +68,10 @@ void Blend2dRenderer::CreatePresentationResources() {
       throw std::runtime_error(fmt::format(
           "SDL_CreateRenderer failed: {}", SDL_GetError()));
     }
+    if (!SDL_SetRenderVSync(sdl_renderer_, 1)) {
+      log::Warn(
+          "renderer", "SDL_SetRenderVSync failed: {}", SDL_GetError());
+    }
   }
 
   if (texture_) {

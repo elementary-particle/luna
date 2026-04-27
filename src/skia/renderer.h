@@ -5,7 +5,6 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -68,7 +67,11 @@ private:
   };
 
   void InitVulkan();
+  void InitTracyVulkan(bool calibrated_timestamps);
+  void FiniTracyVulkan();
   void CreateSwapchain();
+  void CreateTracySwapchainResources();
+  void DestroyTracySwapchainResources();
   void InitSkia();
   void FiniSkia();
   void DestroySwapchain();
@@ -76,6 +79,10 @@ private:
   bool EnsureGraphicsReady();
   void RecreateSwapchain();
   void SetFatalError(std::string message);
+  bool SubmitTracyCollect(vk::CommandBuffer command_buffer);
+  bool SubmitTracyTimestamp(
+      vk::CommandBuffer command_buffer, vk::Semaphore wait_semaphore,
+      vk::Semaphore signal_semaphore, uint16_t query_id);
 
   static int L_MakeCanvas(lua_State *L);
 
@@ -87,9 +94,22 @@ private:
 #endif
   vk::SurfaceKHR surface_;
   vk::PhysicalDevice physical_device_;
-  DeviceCaps device_caps_;
+  DeviceCaps device_caps_ = {0,
+      {vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+      vk::PresentModeKHR::eFifo};
   vk::Device device_;
   vk::Queue graphics_queue_;
+
+  void *tracy_vk_ctx_ = nullptr;
+  vk::CommandPool tracy_command_pool_;
+  vk::CommandBuffer tracy_context_command_buffer_;
+  std::vector<vk::CommandBuffer> tracy_collect_command_buffers_;
+  std::vector<vk::CommandBuffer> tracy_begin_command_buffers_;
+  std::vector<vk::CommandBuffer> tracy_end_command_buffers_;
+  std::vector<vk::Semaphore> tracy_begin_sems_;
+  std::vector<vk::Semaphore> tracy_end_sems_;
+  bool tracy_vk_ready_ = false;
+  bool tracy_vk_calibrated_ = false;
 
   vk::SwapchainKHR swapchain_;
   std::vector<vk::Image> swapchain_images_;

@@ -6,12 +6,14 @@
 #include <vk_mem_alloc.h>
 
 #include <algorithm>
+#include <cstring>
 #include <optional>
 #include <stdexcept>
 
 #include <fmt/format.h>
 #include <skia/codec/SkCodec.h>
 #include <skia/core/SkCanvas.h>
+#include <skia/core/SkColorSpace.h>
 #include <skia/core/SkFontScanner.h>
 #include <skia/gpu/MutableTextureState.h>
 #include <skia/gpu/graphite/BackendSemaphore.h>
@@ -24,6 +26,7 @@
 #include <skia/gpu/vk/VulkanMemoryAllocator.h>
 #include <skia/gpu/vk/VulkanMutableTextureState.h>
 #include <tracy/Tracy.hpp>
+#include <tracy/TracyVulkan.hpp>
 
 #include "canvas.h"
 #include "font_manager.h"
@@ -37,6 +40,59 @@ sk_sp<skgpu::VulkanMemoryAllocator> MakeVulkanMemoryAllocator(
     PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr);
 
 namespace luna::backend::skia {
+
+namespace {
+SkColorType ToSkColorType(vk::Format format) {
+  switch (format) {
+  case vk::Format::eB8G8R8A8Unorm:
+    return kBGRA_8888_SkColorType;
+  case vk::Format::eR8G8B8A8Unorm:
+    return kRGBA_8888_SkColorType;
+  default:
+    return kUnknown_SkColorType;
+  }
+}
+
+sk_sp<SkColorSpace> ToSkColorSpace(vk::ColorSpaceKHR color_space) {
+  if (color_space == vk::ColorSpaceKHR::eSrgbNonlinear) {
+    static sk_sp<SkColorSpace> srgb = SkColorSpace::MakeSRGB();
+    return srgb;
+  }
+  return nullptr;
+}
+
+SkImageInfo MakeSurfaceImageInfo(
+    int width, int height, vk::SurfaceFormatKHR surface_format) {
+  return SkImageInfo::Make(width, height, ToSkColorType(surface_format.format),
+      kPremul_SkAlphaType, ToSkColorSpace(surface_format.colorSpace));
+}
+
+static constexpr tracy::SourceLocationData kSkiaGpuFrameSource = {
+    "Skia GPU Frame", "SkiaRenderer::EndFrame", __FILE__, __LINE__, 0};
+
+void EmitTracyGpuZoneBegin(TracyVkCtx ctx,
+    const tracy::SourceLocationData *source_location, uint16_t query_id) {
+  auto *item = tracy::Profiler::QueueSerial();
+  tracy::MemWrite(&item->hdr.type, tracy::QueueType::GpuZoneBeginSerial);
+  tracy::MemWrite(&item->gpuZoneBegin.cpuTime, tracy::Profiler::GetTime());
+  tracy::MemWrite(
+      &item->gpuZoneBegin.srcloc, reinterpret_cast<uint64_t>(source_location));
+  tracy::MemWrite(&item->gpuZoneBegin.thread, tracy::GetThreadHandle());
+  tracy::MemWrite(&item->gpuZoneBegin.queryId, query_id);
+  tracy::MemWrite(&item->gpuZoneBegin.context, ctx->GetId());
+  tracy::Profiler::QueueSerialFinish();
+}
+
+void EmitTracyGpuZoneEnd(TracyVkCtx ctx, uint16_t query_id) {
+  auto *item = tracy::Profiler::QueueSerial();
+  tracy::MemWrite(&item->hdr.type, tracy::QueueType::GpuZoneEndSerial);
+  tracy::MemWrite(&item->gpuZoneEnd.cpuTime, tracy::Profiler::GetTime());
+  tracy::MemWrite(&item->gpuZoneEnd.thread, tracy::GetThreadHandle());
+  tracy::MemWrite(&item->gpuZoneEnd.queryId, query_id);
+  tracy::MemWrite(&item->gpuZoneEnd.context, ctx->GetId());
+  tracy::Profiler::QueueSerialFinish();
+}
+} // namespace
 
 SkiaRenderer::SkiaRenderer() {}
 
@@ -153,25 +209,30 @@ void SkiaRenderer::InitVulkan() {
 
       std::optional<vk::SurfaceFormatKHR> surface_format;
       std::optional<vk::PresentModeKHR> present_mode;
+      auto properties = physical_device.getProperties();
 
       for (auto const &format : surface_formats) {
-        if (format.format == vk::Format::eR8G8B8A8Unorm &&
+        if (format.format == vk::Format::eB8G8R8A8Unorm &&
             format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
           surface_format = format;
+          break;
+        }
+      }
+      if (!surface_format) {
+        for (auto const &format : surface_formats) {
+          if (format.format == vk::Format::eR8G8B8A8Unorm &&
+              format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
+            surface_format = format;
+            break;
+          }
         }
       }
 
       for (auto const &mode : present_modes) {
-        if (mode == vk::PresentModeKHR::eMailbox) {
+        if (mode == vk::PresentModeKHR::eFifo) {
           present_mode = mode;
-        } else if (mode == vk::PresentModeKHR::eFifo &&
-            present_mode != vk::PresentModeKHR::eMailbox) {
-          present_mode = mode;
+          break;
         }
-      }
-
-      if (!(surface_format && present_mode)) {
-        return std::nullopt;
       }
 
       std::optional<uint32_t> queue_index;
@@ -180,10 +241,28 @@ void SkiaRenderer::InitVulkan() {
         if ((queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics) &&
             physical_device.getSurfaceSupportKHR(i, surface)) {
           queue_index = i;
+          break;
         }
       }
 
-      if (!queue_index.has_value()) {
+      auto queue_family_index =
+          queue_index ? fmt::format("{}", *queue_index) : "missing";
+      auto surface_format_name =
+          surface_format ? vk::to_string(surface_format->format) : "missing";
+      auto color_space_name = surface_format
+          ? vk::to_string(surface_format->colorSpace)
+          : "missing";
+      auto present_mode_name =
+          present_mode ? vk::to_string(*present_mode) : "missing";
+      bool compatible = queue_index.has_value() && surface_format.has_value() &&
+          present_mode.has_value();
+      log::Debug("renderer",
+          "device='{}' queue_family_index={} surface_format={} color_space={} "
+          "present_mode={} compatible={}",
+          properties.deviceName.data(), queue_family_index, surface_format_name,
+          color_space_name, present_mode_name, compatible);
+
+      if (!compatible) {
         return std::nullopt;
       }
 
@@ -203,14 +282,28 @@ void SkiaRenderer::InitVulkan() {
     throw std::runtime_error("no compatible Vulkan device found");
   }
 
+  bool calibrated_timestamps = false;
   {
     std::vector<vk::DeviceQueueCreateInfo> queue_info;
     float priority = 1.0f;
     queue_info.push_back(vk::DeviceQueueCreateInfo{
         {}, device_caps_.queue_family_index, 1, &priority});
 
-    vk::DeviceCreateInfo device_info{
-        {}, queue_info, {}, {vk::KHRSwapchainExtensionName}};
+    std::vector<char const *> device_extensions = {
+        vk::KHRSwapchainExtensionName};
+    for (auto const &extension :
+        physical_device_.enumerateDeviceExtensionProperties()) {
+      if (std::strcmp(extension.extensionName,
+              VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) == 0) {
+        calibrated_timestamps = true;
+        break;
+      }
+    }
+    if (calibrated_timestamps) {
+      device_extensions.push_back(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
+    }
+
+    vk::DeviceCreateInfo device_info{{}, queue_info, {}, device_extensions};
     device_ = physical_device_.createDevice(device_info);
 
     graphics_queue_ = device_.getQueue(device_caps_.queue_family_index, 0);
@@ -220,7 +313,72 @@ void SkiaRenderer::InitVulkan() {
       device_caps_.queue_family_index,
       vk::to_string(device_caps_.present_mode));
 
+  InitTracyVulkan(calibrated_timestamps);
   CreateSwapchain();
+}
+
+void SkiaRenderer::InitTracyVulkan(bool calibrated_timestamps) {
+  ZoneScopedN("InitTracyVulkan");
+  tracy_vk_ready_ = false;
+  tracy_vk_calibrated_ = false;
+  tracy_vk_ctx_ = nullptr;
+
+  try {
+    vk::CommandPoolCreateInfo pool_info{
+        vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+        device_caps_.queue_family_index};
+    tracy_command_pool_ = device_.createCommandPool(pool_info);
+
+    vk::CommandBufferAllocateInfo alloc_info{
+        tracy_command_pool_, vk::CommandBufferLevel::ePrimary, 1};
+    tracy_context_command_buffer_ =
+        device_.allocateCommandBuffers(alloc_info).front();
+
+    if (calibrated_timestamps) {
+      tracy_vk_ctx_ = TracyVkContextCalibrated(vk_instance_, physical_device_,
+          device_, graphics_queue_, tracy_context_command_buffer_,
+          VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr,
+          VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr);
+      tracy_vk_calibrated_ = true;
+    } else {
+      tracy_vk_ctx_ = TracyVkContext(vk_instance_, physical_device_, device_,
+          graphics_queue_, tracy_context_command_buffer_,
+          VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr,
+          VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr);
+    }
+
+    TracyVkContextName(static_cast<TracyVkCtx>(tracy_vk_ctx_), "Skia Vulkan",
+        static_cast<uint16_t>(std::strlen("Skia Vulkan")));
+    tracy_vk_ready_ = true;
+    log::Info("renderer", "Tracy Vulkan GPU profiling initialized{}",
+        tracy_vk_calibrated_ ? " with calibrated timestamps" : "");
+  } catch (const std::exception &e) {
+    log::Warn("renderer", "Tracy Vulkan GPU profiling disabled: {}", e.what());
+    FiniTracyVulkan();
+  }
+}
+
+void SkiaRenderer::FiniTracyVulkan() {
+  DestroyTracySwapchainResources();
+
+  if (device_ && tracy_context_command_buffer_) {
+    device_.freeCommandBuffers(
+        tracy_command_pool_, {tracy_context_command_buffer_});
+    tracy_context_command_buffer_ = vk::CommandBuffer{};
+  }
+
+  if (tracy_vk_ctx_) {
+    TracyVkDestroy(static_cast<TracyVkCtx>(tracy_vk_ctx_));
+    tracy_vk_ctx_ = nullptr;
+  }
+
+  if (device_ && tracy_command_pool_) {
+    device_.destroyCommandPool(tracy_command_pool_);
+    tracy_command_pool_ = vk::CommandPool{};
+  }
+
+  tracy_vk_ready_ = false;
+  tracy_vk_calibrated_ = false;
 }
 
 void SkiaRenderer::CreateSwapchain() {
@@ -278,11 +436,12 @@ void SkiaRenderer::CreateSwapchain() {
     acquired_sems_.push_back(device_.createSemaphore({}));
     rendered_sems_[i] = device_.createSemaphore({});
   }
+  CreateTracySwapchainResources();
 
   texture_info_ = {
       static_cast<VkSampleCountFlagBits>(vk::SampleCountFlagBits::e1),
       skgpu::Mipmapped::kNo, 0,
-      static_cast<VkFormat>(vk::Format::eR8G8B8A8Unorm),
+      static_cast<VkFormat>(device_caps_.surface_format.format),
       static_cast<VkImageTiling>(vk::ImageTiling::eOptimal),
       static_cast<VkImageUsageFlags>(vk::ImageUsageFlagBits::eTransferSrc |
           vk::ImageUsageFlagBits::eTransferDst |
@@ -290,6 +449,29 @@ void SkiaRenderer::CreateSwapchain() {
           vk::ImageUsageFlagBits::eColorAttachment),
       static_cast<VkSharingMode>(vk::SharingMode::eExclusive),
       static_cast<VkImageAspectFlags>(vk::ImageAspectFlagBits::eColor), {}};
+}
+
+void SkiaRenderer::CreateTracySwapchainResources() {
+  if (!tracy_vk_ready_ || !tracy_command_pool_ || image_count_ == 0) {
+    return;
+  }
+
+  tracy_begin_sems_.resize(image_count_);
+  tracy_end_sems_.resize(image_count_);
+  for (uint32_t i = 0; i < image_count_; ++i) {
+    tracy_begin_sems_[i] = device_.createSemaphore({});
+    tracy_end_sems_[i] = device_.createSemaphore({});
+  }
+
+  vk::CommandBufferAllocateInfo alloc_info{
+      tracy_command_pool_, vk::CommandBufferLevel::ePrimary, image_count_ * 3};
+  auto command_buffers = device_.allocateCommandBuffers(alloc_info);
+  tracy_collect_command_buffers_.assign(
+      command_buffers.begin(), command_buffers.begin() + image_count_);
+  tracy_begin_command_buffers_.assign(command_buffers.begin() + image_count_,
+      command_buffers.begin() + image_count_ * 2);
+  tracy_end_command_buffers_.assign(
+      command_buffers.begin() + image_count_ * 2, command_buffers.end());
 }
 
 void SkiaRenderer::InitSkia() {
@@ -349,6 +531,8 @@ void SkiaRenderer::DestroySwapchain() {
     return;
   }
 
+  DestroyTracySwapchainResources();
+
   // Destroy synchronization objects
   for (uint32_t i = 0; i < image_count_; i++) {
     device_.destroySemaphore(rendered_sems_[i]);
@@ -374,6 +558,44 @@ void SkiaRenderer::DestroySwapchain() {
   image_count_ = 0;
 }
 
+void SkiaRenderer::DestroyTracySwapchainResources() {
+  if (!device_) {
+    tracy_collect_command_buffers_.clear();
+    tracy_begin_command_buffers_.clear();
+    tracy_end_command_buffers_.clear();
+    tracy_begin_sems_.clear();
+    tracy_end_sems_.clear();
+    return;
+  }
+
+  std::vector<vk::CommandBuffer> command_buffers;
+  command_buffers.reserve(tracy_collect_command_buffers_.size() +
+      tracy_begin_command_buffers_.size() + tracy_end_command_buffers_.size());
+  command_buffers.insert(command_buffers.end(),
+      tracy_collect_command_buffers_.begin(),
+      tracy_collect_command_buffers_.end());
+  command_buffers.insert(command_buffers.end(),
+      tracy_begin_command_buffers_.begin(), tracy_begin_command_buffers_.end());
+  command_buffers.insert(command_buffers.end(),
+      tracy_end_command_buffers_.begin(), tracy_end_command_buffers_.end());
+  if (!command_buffers.empty() && tracy_command_pool_) {
+    device_.freeCommandBuffers(tracy_command_pool_, command_buffers);
+  }
+  tracy_collect_command_buffers_.clear();
+  tracy_begin_command_buffers_.clear();
+  tracy_end_command_buffers_.clear();
+
+  for (auto semaphore : tracy_begin_sems_) {
+    device_.destroySemaphore(semaphore);
+  }
+  tracy_begin_sems_.clear();
+
+  for (auto semaphore : tracy_end_sems_) {
+    device_.destroySemaphore(semaphore);
+  }
+  tracy_end_sems_.clear();
+}
+
 void SkiaRenderer::Fini() {
   frame_active_ = false;
 
@@ -382,6 +604,9 @@ void SkiaRenderer::Fini() {
   }
   if (swapchain_) {
     DestroySwapchain();
+  }
+  if (tracy_vk_ready_ || tracy_vk_ctx_ || tracy_command_pool_) {
+    FiniTracyVulkan();
   }
 
   if (device_) {
@@ -437,8 +662,8 @@ bool SkiaRenderer::BeginFrame(lua_State *L) {
   }
 
   SkCanvas *sk = sk_recorder_->makeDeferredCanvas(
-      SkImageInfo::Make(surface_extent_.width, surface_extent_.height,
-          kRGBA_8888_SkColorType, kPremul_SkAlphaType),
+      MakeSurfaceImageInfo(static_cast<int>(surface_extent_.width),
+          static_cast<int>(surface_extent_.height), device_caps_.surface_format),
       skgpu::graphite::TextureInfos::MakeVulkan(texture_info_));
   if (!sk) {
     SetFatalError("failed to create deferred canvas");
@@ -455,6 +680,53 @@ bool SkiaRenderer::BeginFrame(lua_State *L) {
   }
   lua_pop(L, 1);
   frame_active_ = true;
+  return true;
+}
+
+bool SkiaRenderer::SubmitTracyCollect(vk::CommandBuffer command_buffer) {
+  if (!tracy_vk_ready_ || !tracy_vk_ctx_) {
+    return true;
+  }
+
+  graphics_queue_.waitIdle();
+
+  auto ctx = static_cast<TracyVkCtx>(tracy_vk_ctx_);
+  command_buffer.reset();
+  vk::CommandBufferBeginInfo begin_info{
+      vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+  command_buffer.begin(begin_info);
+  TracyVkCollect(ctx, command_buffer);
+  command_buffer.end();
+
+  vk::SubmitInfo submit_info;
+  submit_info.setCommandBuffers(command_buffer);
+  graphics_queue_.submit(submit_info);
+  return true;
+}
+
+bool SkiaRenderer::SubmitTracyTimestamp(vk::CommandBuffer command_buffer,
+    vk::Semaphore wait_semaphore, vk::Semaphore signal_semaphore,
+    uint16_t query_id) {
+  if (!tracy_vk_ready_ || !tracy_vk_ctx_) {
+    return true;
+  }
+
+  auto ctx = static_cast<TracyVkCtx>(tracy_vk_ctx_);
+  command_buffer.reset();
+  vk::CommandBufferBeginInfo begin_info{
+      vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+  command_buffer.begin(begin_info);
+  command_buffer.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
+      static_cast<vk::QueryPool>(ctx->GetQueryPool()), query_id);
+  command_buffer.end();
+
+  vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eTopOfPipe;
+  vk::SubmitInfo submit_info;
+  submit_info.setWaitSemaphores(wait_semaphore);
+  submit_info.setWaitDstStageMask(wait_stage);
+  submit_info.setCommandBuffers(command_buffer);
+  submit_info.setSignalSemaphores(signal_semaphore);
+  graphics_queue_.submit(submit_info);
   return true;
 }
 
@@ -503,6 +775,15 @@ bool SkiaRenderer::EndFrame() {
   }
   image_index_ = next_index.value;
 
+  const bool profile_gpu_frame = tracy_vk_ready_ &&
+      image_index_ < tracy_begin_command_buffers_.size() &&
+      image_index_ < tracy_end_command_buffers_.size() &&
+      image_index_ < tracy_collect_command_buffers_.size() &&
+      image_index_ < tracy_begin_sems_.size() &&
+      image_index_ < tracy_end_sems_.size();
+
+  uint16_t tracy_begin_query = 0;
+  uint16_t tracy_end_query = 0;
   vk::Image next_image = swapchain_images_[image_index_];
   SkSurfaceProps props{};
   sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(sk_recorder_.get(),
@@ -522,8 +803,20 @@ bool SkiaRenderer::EndFrame() {
     return false;
   }
 
+  if (profile_gpu_frame) {
+    auto ctx = static_cast<TracyVkCtx>(tracy_vk_ctx_);
+    SubmitTracyCollect(tracy_collect_command_buffers_[image_index_]);
+
+    tracy_begin_query = static_cast<uint16_t>(ctx->NextQueryId());
+    EmitTracyGpuZoneBegin(ctx, &kSkiaGpuFrameSource, tracy_begin_query);
+
+    SubmitTracyTimestamp(tracy_begin_command_buffers_[image_index_], acquired,
+        tracy_begin_sems_[image_index_], tracy_begin_query);
+  }
+
   skgpu::graphite::BackendSemaphore wait =
-      skgpu::graphite::BackendSemaphores::MakeVulkan(acquired);
+      skgpu::graphite::BackendSemaphores::MakeVulkan(
+          profile_gpu_frame ? tracy_begin_sems_[image_index_] : acquired);
   skgpu::graphite::BackendSemaphore signal =
       skgpu::graphite::BackendSemaphores::MakeVulkan(
           rendered_sems_[image_index_]);
@@ -565,8 +858,18 @@ bool SkiaRenderer::EndFrame() {
     sk_context_->submit();
   }
 
-  vk::PresentInfoKHR present_info{
-      {rendered_sems_[image_index_]}, {swapchain_}, {image_index_}};
+  vk::Semaphore present_wait = rendered_sems_[image_index_];
+  if (profile_gpu_frame) {
+    auto ctx = static_cast<TracyVkCtx>(tracy_vk_ctx_);
+    tracy_end_query = static_cast<uint16_t>(ctx->NextQueryId());
+    EmitTracyGpuZoneEnd(ctx, tracy_end_query);
+    SubmitTracyTimestamp(tracy_end_command_buffers_[image_index_],
+        rendered_sems_[image_index_], tracy_end_sems_[image_index_],
+        tracy_end_query);
+    present_wait = tracy_end_sems_[image_index_];
+  }
+
+  vk::PresentInfoKHR present_info{{present_wait}, {swapchain_}, {image_index_}};
   auto result = graphics_queue_.presentKHR(present_info);
   if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
     if (result == vk::Result::eErrorOutOfDateKHR) {
@@ -628,8 +931,7 @@ bool SkiaRenderer::UpdateWindowMetrics(bool *changed) {
       static_cast<float>(canvas_width_) / static_cast<float>(window_width_);
   canvas_scale_y_ =
       static_cast<float>(canvas_height_) / static_cast<float>(window_height_);
-  window_to_surface_matrix_ =
-      SkMatrix::Scale(canvas_scale_x_, canvas_scale_y_);
+  window_to_surface_matrix_ = SkMatrix::Scale(canvas_scale_x_, canvas_scale_y_);
 
   if (changed) {
     *changed = metrics_changed;
@@ -760,8 +1062,7 @@ int SkiaRenderer::L_MakeCanvas(lua_State *L) {
   }
 
   sk_sp<SkSurface> surface = SkSurfaces::RenderTarget(r->sk_recorder_.get(),
-      SkImageInfo::Make(
-          width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType));
+      MakeSurfaceImageInfo(width, height, r->device_caps_.surface_format));
   if (!surface) {
     return luaL_error(L, "make_canvas: failed to create render target");
   }
