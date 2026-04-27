@@ -1,8 +1,12 @@
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <skia/core/SkStream.h>
 
@@ -24,6 +28,27 @@ void Require(bool condition, const std::string &message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
+}
+
+std::vector<uint8_t> ReadFileBytes(const std::filesystem::path &path) {
+  std::ifstream file(path, std::ios::binary);
+  Require(file.is_open(), "failed to open test font");
+
+  const uintmax_t file_size = std::filesystem::file_size(path);
+  Require(file_size <= static_cast<uintmax_t>(std::numeric_limits<size_t>::max()),
+      "test font is too large");
+  Require(file_size <=
+              static_cast<uintmax_t>(
+                  std::numeric_limits<std::streamsize>::max()),
+      "test font exceeds stream size limit");
+
+  std::vector<uint8_t> bytes(static_cast<size_t>(file_size));
+  if (!bytes.empty()) {
+    file.read(reinterpret_cast<char *>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size()));
+    Require(file.good(), "failed to read test font");
+  }
+  return bytes;
 }
 
 void CheckMetrics(const luna::backend::ParagraphMetrics &metrics,
@@ -60,10 +85,12 @@ void CheckMetrics(const luna::backend::ParagraphMetrics &metrics,
 
 luna::backend::ParagraphMetrics MeasureSkiaParagraph(
     const std::filesystem::path &font_path) {
+  const std::vector<uint8_t> font_bytes = ReadFileBytes(font_path);
   luna::backend::skia::Canvas canvas;
   canvas.set_font_manager(luna::backend::skia::MakeRuntimeFontManager());
   Require(luna::backend::skia::RegisterRuntimeFont(
-              canvas.font_mgr(), SkStream::MakeFromFile(font_path.c_str())),
+              canvas.font_mgr(),
+              SkMemoryStream::MakeCopy(font_bytes.data(), font_bytes.size())),
       "failed to register test font for skia");
 
   luna::backend::skia::Canvas::Font font;
@@ -86,10 +113,17 @@ luna::backend::ParagraphMetrics MeasureSkiaParagraph(
 
 luna::backend::ParagraphMetrics MeasureBlend2dParagraph(
     const std::filesystem::path &font_path) {
+  const std::vector<uint8_t> font_bytes = ReadFileBytes(font_path);
   luna::backend::blend2d::Canvas canvas;
   canvas.font_mgr = luna::backend::blend2d::MakeRuntimeFontManager();
-  Require(luna::backend::blend2d::RegisterRuntimeFont(
-              &canvas.font_mgr, font_path.c_str()),
+  BLFontData font_data;
+  Require(font_data.create_from_data(font_bytes.data(), font_bytes.size()) ==
+              BL_SUCCESS,
+      "failed to create blend2d font data");
+  BLFontFace face;
+  Require(face.create_from_data(font_data, 0) == BL_SUCCESS && face.is_valid(),
+      "failed to create blend2d font face");
+  Require(canvas.font_mgr.add_face(face) == BL_SUCCESS,
       "failed to register test font for blend2d");
 
   luna::backend::blend2d::Font font;
