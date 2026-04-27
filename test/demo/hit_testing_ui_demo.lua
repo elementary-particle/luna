@@ -79,6 +79,7 @@ local layout = {
 
 local fonts = nil
 local shapes = nil
+local paragraph_cache = {}
 
 local state = {
   mode = 1,
@@ -206,8 +207,25 @@ local function draw_chip(canvas, x, y, label, bg, fg)
   return w
 end
 
-local function draw_copy(canvas, x, y, width, text, font, color)
-  local paragraph = canvas:paragraph({
+local function cached_paragraph(canvas, key, opts)
+  local cached = paragraph_cache[key]
+  if cached ~= nil then
+    return cached
+  end
+
+  local paragraph = canvas:paragraph(opts)
+  local metrics = paragraph:measure()
+  cached = {
+    paragraph = paragraph,
+    metrics = metrics,
+    height = math.ceil(math.max(metrics.height or 0, 1)),
+  }
+  paragraph_cache[key] = cached
+  return cached
+end
+
+local function draw_copy(canvas, key, x, y, width, text, font, color)
+  local cached = cached_paragraph(canvas, key, {
     width = width,
     font = font,
     color = color,
@@ -215,13 +233,8 @@ local function draw_copy(canvas, x, y, width, text, font, color)
       { text = text },
     },
   })
-  canvas:draw_paragraph(paragraph, x, y)
-  return paragraph
-end
-
-local function paragraph_height(paragraph)
-  local metrics = paragraph:measure()
-  return math.ceil(math.max(metrics.height or 0, 1)), metrics
+  canvas:draw_paragraph(cached.paragraph, x, y)
+  return cached
 end
 
 local function draw_header(canvas)
@@ -230,6 +243,7 @@ local function draw_header(canvas)
   canvas:draw_text("Hit Testing UI Demo", 40, 72, fonts.hero, fill(colors.text))
   draw_copy(
     canvas,
+    "header.subtitle",
     40,
     88,
     940,
@@ -255,6 +269,7 @@ local function draw_sidebar(canvas, rect)
   canvas:draw_text("Mode Switcher", rect.x + 24, rect.y + 40, fonts.title, fill(colors.text))
   draw_copy(
     canvas,
+    "sidebar.intro",
     rect.x + 24,
     rect.y + 62,
     rect.w - 48,
@@ -314,6 +329,7 @@ local function draw_sidebar(canvas, rect)
     canvas:draw_text(mode.title, card_rect.x + 38, card_rect.y + 36, fonts.title, fill(colors.text))
     draw_copy(
       canvas,
+      "sidebar.card." .. mode.id .. ".summary",
       card_rect.x + 38,
       card_rect.y + 56,
       card_rect.w - 86,
@@ -329,7 +345,7 @@ local function draw_sidebar(canvas, rect)
     end
   end
 
-  local note = canvas:paragraph({
+  local note = cached_paragraph(canvas, "sidebar.note", {
     width = rect.w - 72,
     font = fonts.body,
     color = colors.muted,
@@ -339,12 +355,12 @@ local function draw_sidebar(canvas, rect)
       { text = " even when the element is rotated." },
     },
   })
-  local note_h = math.max(122, 52 + paragraph_height(note) + 20)
+  local note_h = math.max(122, 52 + note.height + 20)
   local note_y = rect.y + rect.h - 42 - note_h
   canvas:draw_rrect(rect.x + 18, note_y, rect.w - 36, note_h, 22, 22, fill(0xFF12192D))
   canvas:draw_rrect(rect.x + 18, note_y, rect.w - 36, note_h, 22, 22, stroke(colors.panel_border, 1.5))
   canvas:draw_text("Rect Targets", rect.x + 36, note_y + 34, fonts.subtitle, fill(colors.gold))
-  canvas:draw_paragraph(note, rect.x + 36, note_y + 52)
+  canvas:draw_paragraph(note.paragraph, rect.x + 36, note_y + 52)
 end
 
 local function draw_grid(canvas, rect)
@@ -453,6 +469,7 @@ local function draw_stage(canvas, rect)
   canvas:draw_text("Interaction Stage", rect.x + 24, rect.y + 40, fonts.title, fill(colors.text))
   draw_copy(
     canvas,
+    "stage.intro",
     rect.x + 24,
     rect.y + 62,
     rect.w - 48,
@@ -499,7 +516,7 @@ local function draw_stage(canvas, rect)
   draw_metric_box(rect.x + 20, "Rect activations", tostring(state.card_clicks + state.capsule_clicks), mode.accent)
   draw_metric_box(rect.x + rect.w - metric_w - 20, "Path activations", tostring(state.ring_clicks), colors.gold)
 
-  local note = canvas:paragraph({
+  local note = cached_paragraph(canvas, "stage.note." .. mode.id, {
     width = rect.w - 48,
     font = fonts.body,
     color = colors.muted,
@@ -511,7 +528,7 @@ local function draw_stage(canvas, rect)
       { text = "." },
     },
   })
-  canvas:draw_paragraph(note, rect.x + 24, metric_y + metric_h + 28)
+  canvas:draw_paragraph(note.paragraph, rect.x + 24, metric_y + metric_h + 28)
 end
 
 local function draw_info_row(canvas, rect, label, value, accent)
@@ -556,7 +573,7 @@ local function draw_inspector(canvas, rect)
     state.mouse_down and mode.accent or colors.muted
   )
 
-  local action = canvas:paragraph({
+  local action = cached_paragraph(canvas, "inspector.action." .. state.last_action, {
     width = row_w - 36,
     font = fonts.body,
     color = colors.text,
@@ -564,13 +581,13 @@ local function draw_inspector(canvas, rect)
       { text = state.last_action },
     },
   })
-  local action_h = math.max(132, 48 + paragraph_height(action) + 20)
+  local action_h = math.max(132, 48 + action.height + 20)
   local action_y = rect.y + rect.h - 18 - action_h
 
   canvas:draw_rrect(row_x, action_y, row_w, action_h, 22, 22, fill(0xFF11192D))
   canvas:draw_rrect(row_x, action_y, row_w, action_h, 22, 22, stroke(colors.panel_border, 1.5))
   canvas:draw_text("Last action", row_x + 18, action_y + 30, fonts.subtitle, fill(mode.accent))
-  canvas:draw_paragraph(action, row_x + 18, action_y + 48)
+  canvas:draw_paragraph(action.paragraph, row_x + 18, action_y + 48)
 end
 
 local function draw_pointer(canvas)
@@ -649,6 +666,7 @@ local function main()
   await_promise(luna.load_fontface(font_path()))
   fonts = compile_fonts(luna.window)
   shapes = build_shapes(luna.window)
+  paragraph_cache = {}
 
   while true do
     if not pump_events() then
