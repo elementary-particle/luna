@@ -74,7 +74,7 @@ public:
 
 private:
   struct TimerEntry {
-    double deadline_seconds = 0.0;
+    std::chrono::duration<double> deadline{};
     std::shared_ptr<EventState> event;
   };
 
@@ -110,9 +110,10 @@ private:
   Mixer mixer_;
   VFS vfs_;
 
-  lua_State *L_;
+  lua_State *L_ = nullptr;
 
-  double now_seconds_ = 0.0;
+  std::chrono::duration<double> timeline_now_{};
+  std::chrono::duration<double> raw_now_{};
   std::chrono::duration<double> frame_time_;
 
   Factory factory_;
@@ -128,11 +129,12 @@ private:
   bool InitLua();
 
   void BindLua(lua_State *L);
-  void RegisterLuaTypes(lua_State *L);
+  void BindLuaTypes(lua_State *L);
   bool CallLuaMain(const std::string &entry_path);
 
   void DrainPromiseCompletions();
-  void AdvanceTime(double dt);
+  void AdvanceTime(std::chrono::duration<double> raw_dt,
+      std::chrono::duration<double> timeline_dt);
   void SignalExpiredTimers();
   void Tick();
 

@@ -58,10 +58,14 @@ bool Mixer::Init(Engine *engine) {
 }
 
 void Mixer::ReleaseLua(lua_State *L) {
-  MIX_StopAllTracks(mixer_, 0);
-  for (auto &[id, track_state] : audio_tracks_) {
-    (void)id;
-    ReleaseTrackAudio(L, track_state);
+  if (mixer_) {
+    MIX_StopAllTracks(mixer_, 0);
+  }
+  if (L) {
+    for (auto &[id, track_state] : audio_tracks_) {
+      (void)id;
+      ReleaseTrackAudio(L, track_state);
+    }
   }
 }
 

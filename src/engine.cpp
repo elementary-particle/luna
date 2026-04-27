@@ -1,8 +1,9 @@
 #include "engine.h"
 
+#include <SDL3/SDL.h>
+
 #include <chrono>
 #include <memory>
-#include <thread>
 #include <utility>
 
 #include <fmt/core.h>
@@ -15,6 +16,46 @@
 namespace luna {
 
 static constexpr const char *CO_TASK_MAP_REGKEY = "luna.co_task_map";
+
+namespace {
+
+using FrameClock = std::chrono::steady_clock;
+using Seconds = std::chrono::duration<double>;
+
+constexpr auto kFrameDelaySpinThreshold = std::chrono::microseconds(250);
+
+FrameClock::duration ToClockDuration(Seconds duration) {
+  return std::chrono::duration_cast<FrameClock::duration>(duration);
+}
+
+Seconds ToSeconds(FrameClock::duration duration) {
+  return std::chrono::duration_cast<Seconds>(duration);
+}
+
+Uint64 ToNanoseconds(FrameClock::duration duration) {
+  return static_cast<Uint64>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count());
+}
+
+FrameClock::time_point DelayUntil(FrameClock::time_point deadline) {
+  while (true) {
+    const auto now = FrameClock::now();
+    if (now >= deadline) {
+      return now;
+    }
+
+    const auto remaining = deadline - now;
+    if (remaining > kFrameDelaySpinThreshold) {
+      ZoneScopedN("FrameDelay");
+      SDL_DelayPrecise(ToNanoseconds(remaining - kFrameDelaySpinThreshold));
+      continue;
+    }
+
+    SDL_CPUPauseInstruction();
+  }
+}
+
+} // namespace
 
 Engine::PromiseState::~PromiseState() {
   if (!owner) {
@@ -30,7 +71,7 @@ Engine::Engine() : renderer_(MakeRendererBackend()) {}
 
 bool Engine::Init() {
   log::Info("engine", "initializing");
-  tracy::SetThreadName("Engine");
+
   factory_.Start();
   log::Debug("engine", "worker factory started");
 
@@ -83,7 +124,7 @@ bool Engine::InitLua() {
 
   lua_getfield(L_, LUA_REGISTRYINDEX, "_PRELOAD");
   lua::PushFunction(L_, [this](lua_State *L) {
-    RegisterLuaTypes(L);
+    BindLuaTypes(L);
     BindLua(L);
 
     return 1;
@@ -175,7 +216,7 @@ void Engine::BindLua(lua_State *L) {
   vfs_.BindLua(L);
 }
 
-void Engine::RegisterLuaTypes(lua_State *L) {
+void Engine::BindLuaTypes(lua_State *L) {
   if (lua::NewType<LEvent>(L)) {
     lua_pushlightuserdata(L, this);
     lua_pushcclosure(L, &Engine::L_EventSignal, 1);
@@ -211,14 +252,14 @@ bool Engine::Run(const std::string &entry_path) {
   }
 
   log::Info("engine", "entering main loop");
-  auto last = std::chrono::steady_clock::now();
+  auto last = FrameClock::now();
+  auto next_frame_deadline = last;
 
   while (alive_task_count_ > 0) {
     if (!renderer_->BeginFrame(L_)) {
       log::Error("engine", "renderer failed: {}",
           renderer_->GetFatalError().empty() ? "unknown renderer error"
                                              : renderer_->GetFatalError());
-      renderer_->Fini();
       alive_task_count_ = 0;
       break;
     }
@@ -229,24 +270,32 @@ bool Engine::Run(const std::string &entry_path) {
       log::Error("engine", "renderer failed: {}",
           renderer_->GetFatalError().empty() ? "unknown renderer error"
                                              : renderer_->GetFatalError());
-      renderer_->Fini();
       alive_task_count_ = 0;
       break;
     }
 
-    auto cpu_time = std::chrono::steady_clock::now() - last;
-    if (cpu_time < frame_time_) {
-      ZoneScopedN("Lua GC");
-      lua_gc(L_, LUA_GCSTEP, 1);
+    auto now = FrameClock::now();
+    const Seconds target_frame_time = frame_time_;
+    if (target_frame_time > Seconds::zero()) {
+      next_frame_deadline += ToClockDuration(target_frame_time);
+      if (now < next_frame_deadline) {
+        ZoneScopedN("Lua GC");
+        lua_gc(L_, LUA_GCSTEP, 1);
+        now = FrameClock::now();
+      }
+      if (now < next_frame_deadline) {
+        now = DelayUntil(next_frame_deadline);
+        AdvanceTime(ToSeconds(now - last), target_frame_time);
+      } else {
+        next_frame_deadline = now;
+        const Seconds elapsed = ToSeconds(now - last);
+        AdvanceTime(elapsed, elapsed);
+      }
+    } else {
+      next_frame_deadline = now;
+      const Seconds elapsed = ToSeconds(now - last);
+      AdvanceTime(elapsed, elapsed);
     }
-    cpu_time = std::chrono::steady_clock::now() - last;
-    if (cpu_time < frame_time_) {
-      std::this_thread::sleep_for(frame_time_ - cpu_time);
-    }
-
-    auto now = std::chrono::steady_clock::now();
-    const std::chrono::duration<double> elapsed = now - last;
-    AdvanceTime(elapsed.count());
     last = now;
 
     FrameMark;
@@ -281,12 +330,15 @@ void Engine::DrainPromiseCompletions() {
   }
 }
 
-void Engine::AdvanceTime(double dt) { now_seconds_ += dt; }
+void Engine::AdvanceTime(Seconds raw_dt, Seconds timeline_dt) {
+  raw_now_ += raw_dt;
+  timeline_now_ += timeline_dt;
+}
 
 void Engine::SignalExpiredTimers() {
   auto it = timers_.begin();
   while (it != timers_.end()) {
-    if (now_seconds_ >= it->deadline_seconds) {
+    if (timeline_now_ >= it->deadline) {
       SignalEvent(it->event);
       it = timers_.erase(it);
     } else {
@@ -560,7 +612,7 @@ int Engine::L_Wait(lua_State *L) {
 
 int Engine::L_Now(lua_State *L) {
   Engine *e = static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-  lua_pushnumber(L, e->now_seconds_);
+  lua_pushnumber(L, e->timeline_now_.count());
   return 1;
 }
 
@@ -571,11 +623,11 @@ int Engine::L_After(lua_State *L) {
     return luaL_error(L, "after: seconds must be >= 0");
   }
 
-  const double deadline = e->now_seconds_ + seconds;
+  const Seconds deadline = e->timeline_now_ + Seconds(seconds);
   auto event = e->CreateEvent();
   e->timers_.push_back(TimerEntry{deadline, event});
 
-  lua_pushnumber(L, deadline);
+  lua_pushnumber(L, deadline.count());
   lua::New<LEvent>(L, std::move(event));
   return 2;
 }
