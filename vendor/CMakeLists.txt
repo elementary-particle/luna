@@ -15,6 +15,8 @@ if(LUNA_BACKEND_BLEND2D)
 
   set(ASMJIT_DIR "${CMAKE_CURRENT_LIST_DIR}/asmjit" CACHE PATH
       "Location of 'asmjit'" FORCE)
+  set(BLEND2D_STATIC ON CACHE BOOL
+      "Build Blend2D as a static library" FORCE)
   set(BLEND2D_NO_STDCXX OFF CACHE BOOL
       "Use the shared C++/unwind runtime for Blend2D" FORCE)
   add_subdirectory(blend2d EXCLUDE_FROM_ALL)
