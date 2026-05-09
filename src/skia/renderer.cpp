@@ -67,6 +67,7 @@ SkImageInfo MakeSurfaceImageInfo(
       kPremul_SkAlphaType, ToSkColorSpace(surface_format.colorSpace));
 }
 
+#if defined(TRACY_ENABLE)
 static constexpr tracy::SourceLocationData kSkiaGpuFrameSource = {
     "Skia GPU Frame", "SkiaRenderer::EndFrame", __FILE__, __LINE__, 0};
 
@@ -92,6 +93,7 @@ void EmitTracyGpuZoneEnd(TracyVkCtx ctx, uint16_t query_id) {
   tracy::MemWrite(&item->gpuZoneEnd.context, ctx->GetId());
   tracy::Profiler::QueueSerialFinish();
 }
+#endif
 } // namespace
 
 SkiaRenderer::SkiaRenderer() {}
@@ -318,11 +320,12 @@ void SkiaRenderer::InitVulkan() {
 }
 
 void SkiaRenderer::InitTracyVulkan(bool calibrated_timestamps) {
-  ZoneScopedN("InitTracyVulkan");
   tracy_vk_ready_ = false;
   tracy_vk_calibrated_ = false;
   tracy_vk_ctx_ = nullptr;
 
+#if defined(TRACY_ENABLE)
+  ZoneScopedN("InitTracyVulkan");
   try {
     vk::CommandPoolCreateInfo pool_info{
         vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
@@ -356,6 +359,9 @@ void SkiaRenderer::InitTracyVulkan(bool calibrated_timestamps) {
     log::Warn("renderer", "Tracy Vulkan GPU profiling disabled: {}", e.what());
     FiniTracyVulkan();
   }
+#else
+  (void)calibrated_timestamps;
+#endif
 }
 
 void SkiaRenderer::FiniTracyVulkan() {
@@ -684,6 +690,10 @@ bool SkiaRenderer::BeginFrame(lua_State *L) {
 }
 
 bool SkiaRenderer::SubmitTracyCollect(vk::CommandBuffer command_buffer) {
+#if !defined(TRACY_ENABLE)
+  (void)command_buffer;
+  return true;
+#else
   if (!tracy_vk_ready_ || !tracy_vk_ctx_) {
     return true;
   }
@@ -702,11 +712,19 @@ bool SkiaRenderer::SubmitTracyCollect(vk::CommandBuffer command_buffer) {
   submit_info.setCommandBuffers(command_buffer);
   graphics_queue_.submit(submit_info);
   return true;
+#endif
 }
 
 bool SkiaRenderer::SubmitTracyTimestamp(vk::CommandBuffer command_buffer,
     vk::Semaphore wait_semaphore, vk::Semaphore signal_semaphore,
     uint16_t query_id) {
+#if !defined(TRACY_ENABLE)
+  (void)command_buffer;
+  (void)wait_semaphore;
+  (void)signal_semaphore;
+  (void)query_id;
+  return true;
+#else
   if (!tracy_vk_ready_ || !tracy_vk_ctx_) {
     return true;
   }
@@ -728,6 +746,7 @@ bool SkiaRenderer::SubmitTracyTimestamp(vk::CommandBuffer command_buffer,
   submit_info.setSignalSemaphores(signal_semaphore);
   graphics_queue_.submit(submit_info);
   return true;
+#endif
 }
 
 bool SkiaRenderer::EndFrame() {
@@ -804,6 +823,7 @@ bool SkiaRenderer::EndFrame() {
   }
 
   if (profile_gpu_frame) {
+#if defined(TRACY_ENABLE)
     auto ctx = static_cast<TracyVkCtx>(tracy_vk_ctx_);
     SubmitTracyCollect(tracy_collect_command_buffers_[image_index_]);
 
@@ -812,6 +832,7 @@ bool SkiaRenderer::EndFrame() {
 
     SubmitTracyTimestamp(tracy_begin_command_buffers_[image_index_], acquired,
         tracy_begin_sems_[image_index_], tracy_begin_query);
+#endif
   }
 
   skgpu::graphite::BackendSemaphore wait =
@@ -860,6 +881,7 @@ bool SkiaRenderer::EndFrame() {
 
   vk::Semaphore present_wait = rendered_sems_[image_index_];
   if (profile_gpu_frame) {
+#if defined(TRACY_ENABLE)
     auto ctx = static_cast<TracyVkCtx>(tracy_vk_ctx_);
     tracy_end_query = static_cast<uint16_t>(ctx->NextQueryId());
     EmitTracyGpuZoneEnd(ctx, tracy_end_query);
@@ -867,6 +889,7 @@ bool SkiaRenderer::EndFrame() {
         rendered_sems_[image_index_], tracy_end_sems_[image_index_],
         tracy_end_query);
     present_wait = tracy_end_sems_[image_index_];
+#endif
   }
 
   vk::PresentInfoKHR present_info{{present_wait}, {swapchain_}, {image_index_}};

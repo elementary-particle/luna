@@ -56,7 +56,9 @@ void Factory::Shutdown() {
 
 void Factory::WorkerMain(std::stop_token stop_token, int i) {
   std::string thread_name(fmt::format("Worker {}", i));
+#if defined(TRACY_ENABLE)
   tracy::SetThreadName(thread_name.c_str());
+#endif
   while (true) {
     CompletedJob job;
 

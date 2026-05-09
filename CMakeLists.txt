@@ -18,6 +18,9 @@ option(LUNA_BACKEND_BLEND2D
 option(LUNA_ENABLE_RENDER_PARITY_TEST
   "Add the render parity fuzz test to ctest"
   OFF)
+option(LUNA_ENABLE_TRACY
+  "Enable Tracy profiling instrumentation"
+  ON)
 
 if(NOT LUNA_BACKEND_SKIA AND NOT LUNA_BACKEND_BLEND2D)
   message(FATAL_ERROR "At least one renderer backend must be enabled")
@@ -42,16 +45,27 @@ add_executable(
   src/renderer_interface.cpp
   src/renderer_factory.cpp
   src/vfs.cpp
-  vendor/tracy/TracyClient.cpp
   ${CMAKE_BINARY_DIR}/lua_helper.cpp
 )
+
+if(LUNA_ENABLE_TRACY)
+  target_sources(luna PRIVATE vendor/tracy/TracyClient.cpp)
+endif()
 
 target_include_directories(luna PRIVATE src)
 
 set_target_properties(luna PROPERTIES OUTPUT_NAME "luna")
 
-target_compile_definitions(luna PRIVATE TRACY_ENABLE TRACY_VK_USE_SYMBOL_TABLE TRACY_ON_DEMAND)
 target_include_directories(luna PRIVATE vendor/tracy)
+
+if(LUNA_ENABLE_TRACY)
+  target_compile_definitions(
+    luna PRIVATE
+    TRACY_ENABLE
+    TRACY_VK_USE_SYMBOL_TABLE
+    TRACY_ON_DEMAND
+  )
+endif()
 
 if(LUNA_ENABLE_SANITIZERS)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
