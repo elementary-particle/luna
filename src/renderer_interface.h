@@ -13,6 +13,10 @@
 
 namespace luna {
 
+namespace asset {
+class Vfs;
+} // namespace asset
+
 class Renderer {
 protected:
   struct PolledEvent {
@@ -47,8 +51,8 @@ public:
   virtual bool HasFatalError() const = 0;
   virtual const std::string &GetFatalError() const = 0;
 
-  virtual std::unique_ptr<AsyncJob> MakeLoadImageJob() = 0;
-  virtual std::unique_ptr<AsyncJob> MakeLoadFontfaceJob() = 0;
+  virtual std::unique_ptr<AsyncJob> MakeLoadImageJob(asset::Vfs *vfs) = 0;
+  virtual std::unique_ptr<AsyncJob> MakeLoadFontfaceJob(asset::Vfs *vfs) = 0;
 };
 
 } // namespace luna

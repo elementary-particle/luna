@@ -1,6 +1,7 @@
 #ifndef LUNA_MIXER_H
 #define LUNA_MIXER_H
 
+#include "asset_vfs.h"
 #include "factory.h"
 
 #include <SDL3_mixer/SDL_mixer.h>
@@ -34,7 +35,7 @@ private:
 
   class LoadAudioJob : public AsyncJob {
   public:
-    explicit LoadAudioJob(Mixer *mixer);
+    LoadAudioJob(Mixer *mixer, asset::Vfs *vfs);
     ~LoadAudioJob() override;
     void Invoke(lua_State *L) override;
     void Run() override;
@@ -42,6 +43,8 @@ private:
 
   private:
     std::string path_;
+    asset::Vfs *vfs_ = nullptr;
+    asset::MappedAsset mapping_;
     bool predecode_ = false;
     MIX_Mixer *mixer_ = nullptr;
     MIX_Audio *audio_ = nullptr;
@@ -75,7 +78,7 @@ public:
 
   void BindLua(lua_State *L);
 
-  std::unique_ptr<AsyncJob> MakeLoadAudioJob();
+  std::unique_ptr<AsyncJob> MakeLoadAudioJob(asset::Vfs *vfs);
 };
 
 } // namespace luna

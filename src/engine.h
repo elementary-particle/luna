@@ -5,9 +5,11 @@
 
 #include <chrono>
 #include <deque>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -60,11 +62,11 @@ struct Task {
 
 class Engine {
 public:
-  Engine();
+  explicit Engine(std::filesystem::path root = std::filesystem::current_path());
   ~Engine();
 
   bool Init();
-  bool Run(const std::string &entry_path = "main.lua");
+  bool Run(std::string_view entry_path = "main.lua");
 
   std::shared_ptr<EventState> CreateEvent() const;
   void SignalEvent(const std::shared_ptr<EventState> &event);
@@ -108,7 +110,7 @@ private:
 
   std::unique_ptr<Renderer> renderer_;
   Mixer mixer_;
-  VFS vfs_;
+  Vfs vfs_;
 
   lua_State *L_ = nullptr;
 
@@ -130,7 +132,7 @@ private:
 
   void BindLua(lua_State *L);
   void BindLuaTypes(lua_State *L);
-  bool CallLuaMain(const std::string &entry_path);
+  bool CallLuaMain(std::string_view entry_path);
 
   void DrainPromiseCompletions();
   void AdvanceTime(std::chrono::duration<double> raw_dt,

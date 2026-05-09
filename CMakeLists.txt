@@ -20,7 +20,7 @@ option(LUNA_ENABLE_RENDER_PARITY_TEST
   OFF)
 option(LUNA_ENABLE_TRACY
   "Enable Tracy profiling instrumentation"
-  ON)
+  OFF)
 
 if(NOT LUNA_BACKEND_SKIA AND NOT LUNA_BACKEND_BLEND2D)
   message(FATAL_ERROR "At least one renderer backend must be enabled")
@@ -34,14 +34,14 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/backend/helpe
 file(READ src/backend/helper.lua BACKEND_HELPER_LUA)
 configure_file(src/backend/lua_helper.cpp.in ${CMAKE_BINARY_DIR}/lua_helper.cpp @ONLY)
 
-# Add the executable
-add_executable(
-  luna
+set(LUNA_SOURCES
   src/main.cpp
   src/engine.cpp
   src/factory.cpp
   src/log.cpp
+  src/lua_json.cpp
   src/mixer.cpp
+  src/asset_vfs.cpp
   src/renderer_interface.cpp
   src/renderer_factory.cpp
   src/vfs.cpp
@@ -49,8 +49,11 @@ add_executable(
 )
 
 if(LUNA_ENABLE_TRACY)
-  target_sources(luna PRIVATE vendor/tracy/TracyClient.cpp)
+  list(APPEND LUNA_SOURCES vendor/tracy/TracyClient.cpp)
 endif()
+
+# Add the executable
+add_executable(luna ${LUNA_SOURCES})
 
 target_include_directories(luna PRIVATE src)
 
@@ -85,16 +88,30 @@ if(LUNA_ENABLE_SANITIZERS)
 endif()
 
 find_package(fmt CONFIG REQUIRED)
+find_package(CLI11 CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(SDL3_mixer CONFIG REQUIRED)
 
 target_link_libraries(
   luna PRIVATE
+  CLI11::CLI11
   fmt::fmt
   SDL3::SDL3
   SDL3_mixer::SDL3_mixer
   luajit::lib
 )
+
+if(BUILD_TESTING)
+  add_executable(
+    luna_asset_vfs_test
+    test/asset_vfs.cpp
+    src/asset_vfs.cpp
+  )
+  target_include_directories(luna_asset_vfs_test PRIVATE src)
+  target_compile_definitions(
+    luna_asset_vfs_test PRIVATE LUNA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  add_test(NAME luna_asset_vfs_test COMMAND luna_asset_vfs_test)
+endif()
 
 if(LUNA_BACKEND_SKIA)
   target_compile_definitions(luna PRIVATE LUNA_HAVE_BACKEND_SKIA=1)
@@ -187,6 +204,7 @@ if(LUNA_BACKEND_SKIA AND LUNA_BACKEND_BLEND2D)
     luna_paragraph_metrics_test
     test/paragraph_metrics.cpp
     src/log.cpp
+    src/asset_vfs.cpp
     src/skia/canvas.cpp
     src/skia/enums.cpp
     src/skia/font_manager.cpp

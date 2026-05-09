@@ -1,5 +1,7 @@
 #include "mixer.h"
 
+#include <SDL3/SDL_iostream.h>
+
 #include <fmt/format.h>
 #include <tracy/Tracy.hpp>
 
@@ -140,11 +142,13 @@ void Mixer::BindLua(lua_State *L) {
   lua_setfield(L, -2, "audio");
 }
 
-std::unique_ptr<AsyncJob> Mixer::MakeLoadAudioJob() {
-  return std::make_unique<LoadAudioJob>(this);
+std::unique_ptr<AsyncJob> Mixer::MakeLoadAudioJob(asset::Vfs *vfs) {
+  return std::make_unique<LoadAudioJob>(this, vfs);
 }
 
-Mixer::LoadAudioJob::LoadAudioJob(Mixer *mixer) { mixer_ = mixer->mixer_; }
+Mixer::LoadAudioJob::LoadAudioJob(Mixer *mixer, asset::Vfs *vfs) : vfs_(vfs) {
+  mixer_ = mixer->mixer_;
+}
 
 void Mixer::LoadAudioJob::Invoke(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
@@ -154,6 +158,14 @@ void Mixer::LoadAudioJob::Invoke(lua_State *L) {
 
   path_ = path;
   predecode_ = lua_toboolean(L, 2) != 0;
+  if (!vfs_) {
+    luaL_error(L, "load_audio: VFS is not available");
+  }
+  auto mapped = vfs_->MapFile(path_);
+  if (!mapped) {
+    luaL_error(L, "load_audio: failed to open file: %s", path);
+  }
+  mapping_ = std::move(mapped).value();
   if (!mixer_) {
     luaL_error(L, "audio mixer is not initialized");
   }
@@ -168,10 +180,19 @@ Mixer::LoadAudioJob::~LoadAudioJob() {
 
 void Mixer::LoadAudioJob::Run() {
   ZoneScopedN("LoadAudio");
-  audio_ = MIX_LoadAudio(mixer_, path_.c_str(), predecode_);
+  SDL_IOStream *io = SDL_IOFromConstMem(
+      mapping_.data(), static_cast<size_t>(mapping_.size()));
+  if (!io) {
+    error_ =
+        fmt::format("SDL_IOFromConstMem failed for {}: {}", path_,
+            SDL_GetError());
+    return;
+  }
+  audio_ = MIX_LoadAudio_IO(mixer_, io, predecode_, true);
   if (!audio_) {
     error_ =
-        fmt::format("MIX_LoadAudio failed for {}: {}", path_, SDL_GetError());
+        fmt::format("MIX_LoadAudio_IO failed for {}: {}", path_,
+            SDL_GetError());
   }
 }
 

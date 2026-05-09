@@ -3,20 +3,8 @@ local luna = require("luna")
 luna.set_window_size(1560, 960)
 luna.set_frame_time(1 / 60)
 
-local function dirname(path)
-  return (path:match("^(.*[/\\])") or "./")
-end
-
-local function script_dir()
-  local source = debug.getinfo(1, "S").source
-  if source:sub(1, 1) == "@" then
-    source = source:sub(2)
-  end
-  return dirname(source)
-end
-
 local function font_path()
-  return script_dir() .. "../assets/ABeeZee-Regular.ttf"
+  return "assets/ABeeZee-Regular.ttf"
 end
 
 local colors = {

@@ -343,8 +343,8 @@ bool Blend2dRenderer::EndFrame() {
   return true;
 }
 
-std::unique_ptr<AsyncJob> Blend2dRenderer::MakeLoadImageJob() {
-  return std::make_unique<LoadImageJob>();
+std::unique_ptr<AsyncJob> Blend2dRenderer::MakeLoadImageJob(asset::Vfs *vfs) {
+  return std::make_unique<LoadImageJob>(vfs);
 }
 
 void Blend2dRenderer::LoadImageJob::Invoke(lua_State *L) {
@@ -353,11 +353,20 @@ void Blend2dRenderer::LoadImageJob::Invoke(lua_State *L) {
     luaL_error(L, "load_image: path is empty");
   }
   path_ = path;
+  if (!vfs_) {
+    luaL_error(L, "load_image: VFS is not available");
+  }
+  auto mapped = vfs_->MapFile(path_);
+  if (!mapped) {
+    luaL_error(L, "load_image: failed to open file: %s", path);
+  }
+  mapping_ = std::move(mapped).value();
 }
 
 void Blend2dRenderer::LoadImageJob::Run() {
   ZoneScopedN("LoadImage");
-  if (image_.image.read_from_file(path_.c_str()) != BL_SUCCESS ||
+  if (image_.image.read_from_data(mapping_.data(),
+          static_cast<size_t>(mapping_.size())) != BL_SUCCESS ||
       image_.image.is_empty()) {
     error_ = fmt::format("failed to decode image: {}", path_);
   }
@@ -371,8 +380,8 @@ int Blend2dRenderer::LoadImageJob::Finish(lua_State *L) {
   return 3;
 }
 
-std::unique_ptr<AsyncJob> Blend2dRenderer::MakeLoadFontfaceJob() {
-  return std::make_unique<LoadFontfaceJob>(font_mgr_);
+std::unique_ptr<AsyncJob> Blend2dRenderer::MakeLoadFontfaceJob(asset::Vfs *vfs) {
+  return std::make_unique<LoadFontfaceJob>(font_mgr_, vfs);
 }
 
 void Blend2dRenderer::LoadFontfaceJob::Invoke(lua_State *L) {
@@ -382,10 +391,18 @@ void Blend2dRenderer::LoadFontfaceJob::Invoke(lua_State *L) {
   }
 
   path_ = path;
+  if (!vfs_) {
+    luaL_error(L, "register_font: VFS is not available");
+  }
+  auto mapped = vfs_->MapFile(path_);
+  if (!mapped) {
+    luaL_error(L, "register_font: failed to open file: %s", path);
+  }
+  mapping_ = std::move(mapped).value();
 }
 
 void Blend2dRenderer::LoadFontfaceJob::Run() {
-  if (!RegisterRuntimeFont(&font_mgr_, path_.c_str())) {
+  if (!RegisterRuntimeFont(&font_mgr_, std::move(mapping_))) {
     error_ = fmt::format("failed to register font '{}'", path_);
   }
 }

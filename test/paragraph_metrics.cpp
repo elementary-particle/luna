@@ -1,14 +1,15 @@
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
-
-#include <skia/core/SkStream.h>
 
 #include "backend/canvas.h"
 #include "blend2d/canvas.h"
@@ -51,6 +52,20 @@ std::vector<uint8_t> ReadFileBytes(const std::filesystem::path &path) {
   return bytes;
 }
 
+luna::asset::MappedAsset MakeMappedFont(
+    const std::vector<uint8_t> &font_bytes) {
+  std::vector<std::byte> bytes(font_bytes.size());
+  if (!bytes.empty()) {
+    std::memcpy(bytes.data(), font_bytes.data(), bytes.size());
+  }
+
+  luna::asset::AssetInfo info;
+  info.path = "test/assets/ABeeZee-Regular.ttf";
+  info.kind = luna::asset::EntryKind::kFile;
+  info.size = static_cast<uint64_t>(bytes.size());
+  return luna::asset::MappedAsset::FromOwnedBuffer(std::move(bytes), info);
+}
+
 void CheckMetrics(const luna::backend::ParagraphMetrics &metrics,
     size_t expected_text_size) {
   Require(std::abs(metrics.width - kParagraphWidth) <= kEpsilon,
@@ -89,8 +104,7 @@ luna::backend::ParagraphMetrics MeasureSkiaParagraph(
   luna::backend::skia::Canvas canvas;
   canvas.set_font_manager(luna::backend::skia::MakeRuntimeFontManager());
   Require(luna::backend::skia::RegisterRuntimeFont(
-              canvas.font_mgr(),
-              SkMemoryStream::MakeCopy(font_bytes.data(), font_bytes.size())),
+              canvas.font_mgr(), MakeMappedFont(font_bytes)),
       "failed to register test font for skia");
 
   luna::backend::skia::Canvas::Font font;
@@ -116,14 +130,8 @@ luna::backend::ParagraphMetrics MeasureBlend2dParagraph(
   const std::vector<uint8_t> font_bytes = ReadFileBytes(font_path);
   luna::backend::blend2d::Canvas canvas;
   canvas.font_mgr = luna::backend::blend2d::MakeRuntimeFontManager();
-  BLFontData font_data;
-  Require(font_data.create_from_data(font_bytes.data(), font_bytes.size()) ==
-              BL_SUCCESS,
-      "failed to create blend2d font data");
-  BLFontFace face;
-  Require(face.create_from_data(font_data, 0) == BL_SUCCESS && face.is_valid(),
-      "failed to create blend2d font face");
-  Require(canvas.font_mgr.add_face(face) == BL_SUCCESS,
+  Require(luna::backend::blend2d::RegisterRuntimeFont(
+              &canvas.font_mgr, MakeMappedFont(font_bytes)),
       "failed to register test font for blend2d");
 
   luna::backend::blend2d::Font font;

@@ -1005,8 +1005,8 @@ void SkiaRenderer::RecreateSwapchain() {
       canvas_scale_x_, canvas_scale_y_);
 }
 
-std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadImageJob() {
-  return std::make_unique<LoadImageJob>(sk_recorder_.get());
+std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadImageJob(asset::Vfs *vfs) {
+  return std::make_unique<LoadImageJob>(sk_recorder_.get(), vfs);
 }
 
 void SkiaRenderer::LoadImageJob::Invoke(lua_State *L) {
@@ -1015,10 +1015,16 @@ void SkiaRenderer::LoadImageJob::Invoke(lua_State *L) {
     luaL_error(L, "load_image: path is empty");
   }
   path_ = path;
-  file_ = SkStreamAsset::MakeFromFile(path);
-  if (!file_) {
+  if (!vfs_) {
+    luaL_error(L, "load_image: Vfs is not available");
+  }
+  auto mapped = vfs_->MapFile(path_);
+  if (!mapped) {
     luaL_error(L, "load_image: failed to open file: %s", path);
   }
+  mapping_ = std::move(mapped).value();
+  file_ = SkMemoryStream::MakeDirect(mapping_.data(),
+      static_cast<size_t>(mapping_.size()));
 }
 
 void SkiaRenderer::LoadImageJob::Run() {
@@ -1048,8 +1054,8 @@ int SkiaRenderer::LoadImageJob::Finish(lua_State *L) {
   return 3;
 }
 
-std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadFontfaceJob() {
-  return std::make_unique<LoadFontfaceJob>(font_mgr_);
+std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadFontfaceJob(asset::Vfs *vfs) {
+  return std::make_unique<LoadFontfaceJob>(font_mgr_, vfs);
 }
 
 void SkiaRenderer::LoadFontfaceJob::Invoke(lua_State *L) {
@@ -1059,15 +1065,19 @@ void SkiaRenderer::LoadFontfaceJob::Invoke(lua_State *L) {
     luaL_error(L, "register_font: path is empty");
 
   path_ = path;
-  file_ = SkStreamAsset::MakeFromFile(path);
-  if (!file_) {
+  if (!vfs_) {
+    luaL_error(L, "register_font: Vfs is not available");
+  }
+  auto mapped = vfs_->MapFile(path_);
+  if (!mapped) {
     luaL_error(L, "register_font: failed to open file: %s", path);
   }
+  mapping_ = std::move(mapped).value();
 }
 
 void SkiaRenderer::LoadFontfaceJob::Run() {
   ZoneScopedN("LoadFontface");
-  if (!font_mgr_ || !RegisterRuntimeFont(font_mgr_, std::move(file_))) {
+  if (!font_mgr_ || !RegisterRuntimeFont(font_mgr_, std::move(mapping_))) {
     error_ = fmt::format("failed to register font '{}'", path_);
   }
 }

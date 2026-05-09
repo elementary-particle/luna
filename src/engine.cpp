@@ -67,7 +67,8 @@ Engine::PromiseState::~PromiseState() {
   result_refs.clear();
 }
 
-Engine::Engine() : renderer_(MakeRendererBackend()) {}
+Engine::Engine(std::filesystem::path root)
+    : renderer_(MakeRendererBackend()), vfs_(std::move(root)) {}
 
 bool Engine::Init() {
   log::Info("engine", "initializing");
@@ -175,7 +176,8 @@ void Engine::BindLua(lua_State *L) {
       [](lua_State *L) {
         Engine *e =
             static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(L, e, e->renderer_->MakeLoadImageJob());
+        return L_StartAsyncJob(
+            L, e, e->renderer_->MakeLoadImageJob(&e->vfs_.assets()));
       },
       1);
   lua_setfield(L, -2, "load_image");
@@ -186,7 +188,8 @@ void Engine::BindLua(lua_State *L) {
       [](lua_State *L) {
         Engine *e =
             static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(L, e, e->renderer_->MakeLoadFontfaceJob());
+        return L_StartAsyncJob(
+            L, e, e->renderer_->MakeLoadFontfaceJob(&e->vfs_.assets()));
       },
       1);
   lua_setfield(L, -2, "load_fontface");
@@ -197,7 +200,8 @@ void Engine::BindLua(lua_State *L) {
       [](lua_State *L) {
         Engine *e =
             static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(L, e, e->mixer_.MakeLoadAudioJob());
+        return L_StartAsyncJob(
+            L, e, e->mixer_.MakeLoadAudioJob(&e->vfs_.assets()));
       },
       1);
   lua_setfield(L, -2, "load_audio");
@@ -234,19 +238,43 @@ void Engine::BindLuaTypes(lua_State *L) {
   lua_pop(L, 1);
 }
 
-bool Engine::CallLuaMain(const std::string &entry_path) {
-  log::Info("engine", "loading Lua entry '{}'", entry_path);
-  if (luaL_dofile(L_, entry_path.c_str()) != 0) {
-    log::Error("engine", "Lua error while loading '{}': {}", entry_path,
+bool Engine::CallLuaMain(std::string_view entry_path) {
+  auto mapped = vfs_.assets().MapFile(entry_path);
+  if (!mapped) {
+    const asset::AssetError &error = mapped.error();
+    const std::string resolved_entry =
+        error.path.empty() ? std::string(entry_path) : error.path;
+    log::Error("engine", "failed to load Lua entry '{}' from VFS: {}",
+        resolved_entry, error.message);
+    return false;
+  }
+
+  const asset::MappedAsset &entry = mapped.value();
+  const std::string resolved_entry = entry.info().path;
+  const std::string chunk_name = "@" + resolved_entry;
+  const char *chunk_data =
+      entry.empty() ? "" : reinterpret_cast<const char *>(entry.data());
+
+  log::Info("engine", "loading Lua entry '{}' from VFS", resolved_entry);
+  if (luaL_loadbuffer(
+          L_, chunk_data, static_cast<size_t>(entry.size()),
+          chunk_name.c_str()) != 0) {
+    log::Error("engine", "Lua error while loading '{}': {}", resolved_entry,
         lua_tostring(L_, -1));
     lua_pop(L_, 1);
     return false;
   }
-  log::Info("engine", "Lua entry '{}' loaded successfully", entry_path);
+  if (lua_pcall(L_, 0, LUA_MULTRET, 0) != 0) {
+    log::Error("engine", "Lua error while loading '{}': {}", resolved_entry,
+        lua_tostring(L_, -1));
+    lua_pop(L_, 1);
+    return false;
+  }
+  log::Info("engine", "Lua entry '{}' loaded successfully", resolved_entry);
   return true;
 }
 
-bool Engine::Run(const std::string &entry_path) {
+bool Engine::Run(std::string_view entry_path) {
   if (!CallLuaMain(entry_path)) {
     return false;
   }

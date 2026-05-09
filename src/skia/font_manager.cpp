@@ -25,6 +25,7 @@ public:
   struct RegisteredTypeface {
     sk_sp<SkTypeface> typeface;
     SkFontStyle style;
+    std::shared_ptr<const asset::MappedAsset> mapping;
   };
 
   RegisteredFontStyleSet(
@@ -67,8 +68,16 @@ public:
       : loader_(SkFontMgr_New_Custom_Empty()),
         scanner_(SkFontScanner_Make_FreeType()) {}
 
-  bool RegisterFont(std::unique_ptr<SkStreamAsset> stream) {
-    if (!loader_ || !scanner_ || !stream) {
+  bool RegisterFont(asset::MappedAsset mapping) {
+    if (!loader_ || !scanner_ || mapping.size() == 0) {
+      return false;
+    }
+
+    auto mapping_ref =
+        std::make_shared<const asset::MappedAsset>(std::move(mapping));
+    std::unique_ptr<SkStreamAsset> stream = SkMemoryStream::MakeDirect(
+        mapping_ref->data(), static_cast<size_t>(mapping_ref->size()));
+    if (!stream) {
       return false;
     }
 
@@ -113,7 +122,7 @@ public:
           continue;
         }
 
-        registered_any |= RegisterTypeface(typeface, style);
+        registered_any |= RegisterTypeface(typeface, style, mapping_ref);
       }
     }
 
@@ -229,8 +238,8 @@ private:
         it->second.name, it->second.typefaces);
   }
 
-  bool RegisterTypeface(
-      sk_sp<SkTypeface> typeface, const SkFontStyle &style) const {
+  bool RegisterTypeface(sk_sp<SkTypeface> typeface, const SkFontStyle &style,
+      std::shared_ptr<const asset::MappedAsset> mapping) const {
     if (!typeface) {
       return false;
     }
@@ -255,7 +264,7 @@ private:
         return true;
       }
     }
-    entry.typefaces.push_back({std::move(typeface), style});
+    entry.typefaces.push_back({std::move(typeface), style, std::move(mapping)});
     return true;
   }
 
@@ -278,12 +287,12 @@ sk_sp<SkFontMgr> MakeRuntimeFontManager() {
 }
 
 bool RegisterRuntimeFont(
-    const sk_sp<SkFontMgr> &font_mgr, std::unique_ptr<SkStreamAsset> stream) {
+    const sk_sp<SkFontMgr> &font_mgr, asset::MappedAsset mapping) {
   if (!font_mgr) {
     return false;
   }
   return static_cast<RuntimeFontManager *>(font_mgr.get())
-      ->RegisterFont(std::move(stream));
+      ->RegisterFont(std::move(mapping));
 }
 
 } // namespace luna::backend::skia

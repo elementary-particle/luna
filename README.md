@@ -2,7 +2,7 @@
 
 Luna is a small native runtime for Lua-driven 2D applications. It combines a coroutine-based Lua host with a build-time-selectable rendering backend, SDL3 windowing/input, and SDL3_mixer audio playback.
 
-The executable loads a Lua entry file at startup, defaulting to `main.lua`, and exposes engine, rendering, asset-loading, audio, and save-file helpers through `require("luna")`.
+The executable treats the selected root directory as its runtime root, loads a Lua entry file from there at startup (default `main.lua`), and exposes engine, rendering, asset-loading, audio, and save-file helpers through `require("luna")`.
 
 ## What It Includes
 
@@ -17,7 +17,7 @@ The executable loads a Lua entry file at startup, defaulting to `main.lua`, and 
 
 ## Project Layout
 
-- `src/`: engine, renderer, canvas, audio mixer, logging, and VFS implementation
+- `src/`: engine, renderer, canvas, audio mixer, logging, and Vfs implementation
 - `vendor/`: vendored LuaJIT build integration and renderer submodules
 - `vcpkg-ports/`: overlay ports for Skia and SDL3-related packages
 - `vcpkg-triplets/`: custom triplets used by the provided CMake presets
@@ -90,16 +90,24 @@ cmake --build build
 
 ## Running
 
-By default, Luna looks for `main.lua` in the working directory:
+By default, Luna uses the current working directory as the root and looks
+for `main.lua` there:
 
 ```bash
 ./build/luna
 ```
 
-You can also provide an explicit Lua entry path:
+You can also provide an explicit Lua entry path in the asset VFS:
 
 ```bash
-./build/luna path/to/main.lua
+./build/luna --script path/to/main.lua
+```
+
+Named flags are available when the root and script path need to be set
+independently:
+
+```bash
+./build/luna --root path/to/game --script scripts/main.lua
 ```
 
 If the build includes more than one renderer backend, you can select one at
@@ -107,7 +115,7 @@ startup with `LUNA_BACKEND`:
 
 ```bash
 LUNA_BACKEND=skia ./build/luna
-LUNA_BACKEND=blend2d ./build/luna path/to/main.lua
+LUNA_BACKEND=blend2d ./build/luna --script path/to/main.lua
 ```
 
 Accepted values are `skia` and `blend2d` (`blend2d_cpu` is also accepted as an
@@ -161,7 +169,7 @@ The `luna` module currently exposes helpers in a few main areas:
 - Rendering: `poll_events`, `make_canvas`, `window`
 - Async asset loading: `load_image`, `load_fontface`, `load_audio`
 - Audio: `audio.track_create`, `audio.track_destroy`, `audio.track_set`, `audio.track_play`, `audio.track_stop`, `audio.track_playing`, `audio.track_stop_event`, `audio.track_set_gain`, `audio.set_mixer_gain`
-- Filesystem/save data: `vfs.open`, `save.write_json`, `save.read_json`, `save.root`
+- Save data: `save.write_json`, `save.read_json`, `save.root`
 - Profiling: `tracy.begin_zone`, `tracy.end_zone` when Tracy is compiled in
 
 The canvas API supports operations such as:
@@ -272,9 +280,8 @@ luna.window:restore()
 
 ## Save Data and Files
 
-Luna separates regular file reads from save-data writes:
+Luna exposes save-data helpers for JSON files:
 
-- `vfs.open(path)` opens a file for reading
 - `save.write_json(path, value)` writes JSON into the app save directory
 - `save.read_json(path)` reads JSON back from the app save directory
 - `save.root` exposes the resolved save directory path
