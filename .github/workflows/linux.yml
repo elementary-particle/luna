@@ -1,0 +1,74 @@
+name: linux
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  LUNA_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.cache/vcpkg/archives
+  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.cache/vcpkg/archives,readwrite
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf \
+            autoconf-archive \
+            automake \
+            clang \
+            libtool \
+            lld \
+            ninja-build \
+            pkg-config \
+            libunwind-dev
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libaudio-dev libjack-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libwayland-dev libxkbcommon-dev libegl1-mesa-dev
+
+      - name: Set up vcpkg
+        run: git clone https://github.com/microsoft/vcpkg.git "${LUNA_VCPKG_ROOT}"
+
+      - name: Create vcpkg cache directories
+        run: mkdir -p "${VCPKG_DEFAULT_BINARY_CACHE}" "${LUNA_VCPKG_ROOT}/downloads"
+
+      - name: Bootstrap vcpkg
+        run: VCPKG_ROOT="${LUNA_VCPKG_ROOT}" "${LUNA_VCPKG_ROOT}/bootstrap-vcpkg.sh"
+
+      - name: Cache vcpkg state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+            ${{ env.LUNA_VCPKG_ROOT }}/downloads
+            ${{ github.workspace }}/build/vcpkg_installed
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**', 'vcpkg-triplets/**') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-
+
+      - name: Configure
+        run: VCPKG_ROOT="${LUNA_VCPKG_ROOT}" cmake --preset vcpkg-x64-linux -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: luna-linux
+          path: build/luna
