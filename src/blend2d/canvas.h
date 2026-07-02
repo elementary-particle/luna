@@ -119,8 +119,6 @@ struct StackEntry {
   BLImage clip_mask;
   std::optional<Paint> layer_paint;
   Region dirty_region;
-  bool reused_image = false;
-  double deferred_alpha = 1.0;
 };
 
 enum class TextAlign : uint32_t {

@@ -62,11 +62,6 @@ BLBoxI LocalClipBox(const StackEntry &entry) {
   return IntersectBoxes(local, MakeFullImageBox(entry.image));
 }
 
-BLPointI ToPointI(const BLPoint &point) {
-  return BLPointI(static_cast<int>(std::lround(point.x)),
-      static_cast<int>(std::lround(point.y)));
-}
-
 bool NearlyEqual(double a, double b) {
   return std::abs(a - b) <= kAlignmentEpsilon;
 }
@@ -85,79 +80,6 @@ BLBoxI ExpandBoundingBox(const BLBox &box) {
       static_cast<int>(std::floor(box.y0 - kMaskPadding)),
       static_cast<int>(std::ceil(box.x1 + kMaskPadding)),
       static_cast<int>(std::ceil(box.y1 + kMaskPadding)));
-}
-
-bool InitMaskImage(BLImage *image, int width, int height, uint32_t thread_count) {
-  image->reset();
-  if (width <= 0 || height <= 0) {
-    return false;
-  }
-  if (image->create(width, height, BL_FORMAT_A8) != BL_SUCCESS) {
-    image->reset();
-    return false;
-  }
-
-  BLContext ctx;
-  if (!BeginContext(&ctx, *image, thread_count)) {
-    image->reset();
-    return false;
-  }
-  ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
-  ctx.clear_all();
-  ctx.end();
-  return true;
-}
-
-void MultiplyMaskWithClip(BLImage *mask, BLPointI mask_origin,
-    const BLImage &clip_mask, BLPointI clip_origin, uint32_t thread_count) {
-  if (mask == nullptr || mask->is_empty()) {
-    return;
-  }
-  if (clip_mask.is_empty()) {
-    return;
-  }
-
-  BLImage aligned_clip;
-  if (!InitMaskImage(
-          &aligned_clip, mask->width(), mask->height(), thread_count)) {
-    mask->reset();
-    return;
-  }
-
-  const BLBoxI mask_box(mask_origin.x, mask_origin.y,
-      mask_origin.x + mask->width(), mask_origin.y + mask->height());
-  const BLBoxI clip_box(clip_origin.x, clip_origin.y,
-      clip_origin.x + clip_mask.width(), clip_origin.y + clip_mask.height());
-  const BLBoxI overlap = IntersectBoxes(mask_box, clip_box);
-  if (IsEmptyBox(overlap)) {
-    mask->reset();
-    return;
-  }
-
-  {
-    BLContext clip_ctx;
-    if (!BeginContext(&clip_ctx, aligned_clip, thread_count)) {
-      mask->reset();
-      return;
-    }
-    clip_ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
-    const BLPointI dst_offset(
-        overlap.x0 - mask_origin.x, overlap.y0 - mask_origin.y);
-    const BLRectI src_area(overlap.x0 - clip_origin.x,
-        overlap.y0 - clip_origin.y, overlap.x1 - overlap.x0,
-        overlap.y1 - overlap.y0);
-    clip_ctx.blit_image(dst_offset, clip_mask, src_area);
-    clip_ctx.end();
-  }
-
-  BLContext ctx;
-  if (!BeginContext(&ctx, *mask, thread_count)) {
-    mask->reset();
-    return;
-  }
-  ctx.set_comp_op(BL_COMP_OP_DST_IN);
-  ctx.blit_image(BLPointI(0, 0), aligned_clip);
-  ctx.end();
 }
 
 ResolvedStyle ResolveStyle(const Shader &shader, const BLMatrix2D &transform) {
@@ -223,7 +145,7 @@ Paint ResolvePaint(const Paint *paint) {
   return resolved;
 }
 
-bool PaintIsReusableOnEmptyLayer(const Paint &paint) {
+bool PaintCanReplaceEmptyLayer(const Paint &paint) {
   return CompOpIsIdentityOnEmpty(paint.comp_op) && NearlyEqual(paint.alpha, 1.0);
 }
 
@@ -240,16 +162,14 @@ BLPath MakeRoundRectPath(
   return path;
 }
 
-BLPath BuildDevicePath(
-    const StackEntry &entry, const BLPath &user_path, BLFillRule fill_rule) {
+BLPath BuildDevicePath(const StackEntry &entry, const BLPath &user_path) {
   BLPath path(user_path);
   path.transform(entry.transform);
-  (void)fill_rule;
   return path;
 }
 
 BLPath BuildRenderablePath(const StackEntry &entry, const BLPath &user_path,
-    BLFillRule fill_rule, const Paint &paint) {
+    const Paint &paint) {
   BLPath path_to_draw(user_path);
   if (std::holds_alternative<Paint::StrokeStyle>(paint.style)) {
     BLPath stroked;
@@ -258,7 +178,7 @@ BLPath BuildRenderablePath(const StackEntry &entry, const BLPath &user_path,
     stroked.add_stroked_path(path_to_draw, stroke.options, approx);
     path_to_draw = std::move(stroked);
   }
-  return BuildDevicePath(entry, path_to_draw, fill_rule);
+  return BuildDevicePath(entry, path_to_draw);
 }
 
 BLPath MakeLocalPath(const StackEntry &entry, const BLPath &device_path) {
@@ -295,6 +215,12 @@ struct RasterMask {
   BLBoxI bounds;
 };
 
+BLBoxI ClipMaskBox(const StackEntry &entry) {
+  return BLBoxI(entry.clip_mask_origin.x, entry.clip_mask_origin.y,
+      entry.clip_mask_origin.x + entry.clip_mask.width(),
+      entry.clip_mask_origin.y + entry.clip_mask.height());
+}
+
 BLBoxI DirtyBoundsForPath(const StackEntry &entry, const BLPath &device_path) {
   BLBox bounds_d{};
   if (device_path.get_bounding_box(&bounds_d) != BL_SUCCESS) {
@@ -311,6 +237,13 @@ std::optional<RasterMask> RasterizePathToMask(
     return std::nullopt;
   }
 
+  if (!entry.clip_mask.is_empty()) {
+    bounds = IntersectBoxes(bounds, ClipMaskBox(entry));
+    if (IsEmptyBox(bounds)) {
+      return std::nullopt;
+    }
+  }
+
   BLImage mask;
   if (mask.create(bounds.x1 - bounds.x0, bounds.y1 - bounds.y0, BL_FORMAT_A8) !=
       BL_SUCCESS) {
@@ -324,14 +257,20 @@ std::optional<RasterMask> RasterizePathToMask(
   mask_ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
   mask_ctx.clear_all();
   mask_ctx.set_fill_rule(fill_rule);
+  mask_ctx.set_pattern_quality(BL_PATTERN_QUALITY_NEAREST);
 
   BLPath local(device_path);
   local.translate(BLPoint(-bounds.x0, -bounds.y0));
-  mask_ctx.fill_path(local, BLRgba32(0xFFFFFFFFu));
+  if (entry.clip_mask.is_empty()) {
+    mask_ctx.fill_path(local, BLRgba32(0xFFFFFFFFu));
+  } else {
+    const BLRectI src_area(bounds.x0 - entry.clip_mask_origin.x,
+        bounds.y0 - entry.clip_mask_origin.y, bounds.x1 - bounds.x0,
+        bounds.y1 - bounds.y0);
+    BLPattern clip_pattern(entry.clip_mask, src_area, BL_EXTEND_MODE_PAD);
+    mask_ctx.fill_path(local, clip_pattern);
+  }
   mask_ctx.end();
-
-  MultiplyMaskWithClip(&mask, BLPointI(bounds.x0, bounds.y0), entry.clip_mask,
-      entry.clip_mask_origin, thread_count);
 
   return RasterMask{std::move(mask), BLPointI(bounds.x0, bounds.y0), bounds};
 }
@@ -345,6 +284,58 @@ void DetachContext(Canvas *canvas) {
 StackEntry &Current(Canvas *canvas) { return canvas->stack.back(); }
 
 StackEntry const &Current(Canvas const *canvas) { return canvas->stack.back(); }
+
+void ResetClipMask(StackEntry *entry) {
+  entry->clip_mask.reset();
+  entry->clip_mask_origin = BLPointI(0, 0);
+}
+
+void SetEmptyClip(StackEntry *entry) {
+  entry->clip_box = BLBoxI(0, 0, 0, 0);
+  entry->clip_origin = BLPointI(0, 0);
+  ResetClipMask(entry);
+}
+
+void SetRectClip(StackEntry *entry, BLBoxI clip_box) {
+  entry->clip_box = clip_box;
+  entry->clip_origin =
+      IsEmptyBox(clip_box) ? BLPointI(0, 0) : BLPointI(clip_box.x0, clip_box.y0);
+  ResetClipMask(entry);
+}
+
+StackEntry MakeRootEntry(BLImage image, BLMatrix2D transform) {
+  StackEntry root;
+  root.image = std::move(image);
+  root.transform = transform;
+  root.layer_origin = BLPointI(0, 0);
+  root.dirty_region.Clear();
+  SetRectClip(&root, MakeFullImageBox(root.image));
+  return root;
+}
+
+BLImage CreateClearedImage(int width, int height, uint32_t thread_count) {
+  BLImage image(width, height, BL_FORMAT_PRGB32);
+  BLContext ctx;
+  if (!BeginContext(&ctx, image, thread_count)) {
+    image.reset();
+    return image;
+  }
+
+  ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
+  ctx.clear_all();
+  ctx.end();
+  return image;
+}
+
+bool CanAdoptLayerIntoParent(const StackEntry &parent, const StackEntry &layer) {
+  if (parent.kind != StackEntry::Kind::kLayer ||
+      !parent.dirty_region.IsEmpty()) {
+    return false;
+  }
+  const Paint paint =
+      ResolvePaint(layer.layer_paint ? &*layer.layer_paint : nullptr);
+  return PaintCanReplaceEmptyLayer(paint);
+}
 
 void MarkCurrentDirty(Canvas *canvas, const BLBoxI &dirty_box) {
   const BLBoxI clipped = IntersectBoxes(dirty_box, Current(canvas).clip_box);
@@ -378,10 +369,7 @@ void ReattachContext(Canvas *canvas) {
 void ApplyClipMaskToState(
     StackEntry *entry, BLImage mask, BLPointI origin, BLBoxI clip_box) {
   if (mask.is_empty() || IsEmptyBox(clip_box)) {
-    entry->clip_box = BLBoxI(0, 0, 0, 0);
-    entry->clip_origin = BLPointI(0, 0);
-    entry->clip_mask.reset();
-    entry->clip_mask_origin = BLPointI(0, 0);
+    SetEmptyClip(entry);
     return;
   }
 
@@ -427,15 +415,32 @@ void DrawDirect(Canvas *canvas, const Paint &paint, const ResolvedStyle &style,
   MarkCurrentDirty(canvas, dirty_box);
 }
 
+void DrawRenderablePath(Canvas *canvas, const BLPath &user_path,
+    BLFillRule fill_rule, Paint const *paint_) {
+  const Paint paint = ResolvePaint(paint_);
+  BLPath device_path = BuildRenderablePath(Current(canvas), user_path, paint);
+  if (Current(canvas).clip_mask.is_empty()) {
+    const ResolvedStyle style = ResolveLocalStyle(
+        paint.shader, Current(canvas).transform, Current(canvas).layer_origin);
+    DrawDirect(canvas, paint, style, device_path, fill_rule);
+    return;
+  }
+
+  const ResolvedStyle style =
+      ResolveStyle(paint.shader, Current(canvas).transform);
+  auto mask = RasterizePathToMask(
+      Current(canvas), device_path, fill_rule, canvas->thread_count_);
+  if (mask.has_value()) {
+    DrawMasked(canvas, paint, style, *mask);
+  }
+}
+
 bool ClipWithPath(
     Canvas *canvas, const BLPath &device_path, BLFillRule fill_rule) {
   auto mask = RasterizePathToMask(
       Current(canvas), device_path, fill_rule, canvas->thread_count_);
   if (!mask.has_value()) {
-    Current(canvas).clip_box = BLBoxI(0, 0, 0, 0);
-    Current(canvas).clip_origin = BLPointI(0, 0);
-    Current(canvas).clip_mask.reset();
-    Current(canvas).clip_mask_origin = BLPointI(0, 0);
+    SetEmptyClip(&Current(canvas));
     SyncContextClip(canvas);
     return false;
   }
@@ -479,17 +484,7 @@ void Canvas::Init(
   thread_count_ = thread_count;
   window_to_surface_transform_ = initial_transform;
   stack.clear();
-  StackEntry root;
-  root.image = std::move(image);
-  root.transform = initial_transform;
-  root.clip_box = MakeFullImageBox(root.image);
-  root.layer_origin = BLPointI(0, 0);
-  root.clip_origin = BLPointI(0, 0);
-  root.clip_mask_origin = BLPointI(0, 0);
-  root.dirty_region.Clear();
-  root.reused_image = false;
-  root.deferred_alpha = 1.0;
-  stack.push_back(std::move(root));
+  stack.push_back(MakeRootEntry(std::move(image), initial_transform));
   ReattachContext(this);
 }
 
@@ -501,17 +496,7 @@ void Canvas::ResetTopImage(BLImage image, BLMatrix2D initial_transform) {
   }
   window_to_surface_transform_ = initial_transform;
   stack.clear();
-  StackEntry root;
-  root.image = std::move(image);
-  root.transform = initial_transform;
-  root.clip_box = MakeFullImageBox(root.image);
-  root.layer_origin = BLPointI(0, 0);
-  root.clip_origin = BLPointI(0, 0);
-  root.clip_mask_origin = BLPointI(0, 0);
-  root.dirty_region.Clear();
-  root.reused_image = false;
-  root.deferred_alpha = 1.0;
-  stack.push_back(std::move(root));
+  stack.push_back(MakeRootEntry(std::move(image), initial_transform));
   ReattachContext(this);
 }
 
@@ -568,32 +553,10 @@ void Canvas::SaveLayer(Paint const *paint) {
   layer.clip_box = parent.clip_box;
   layer.layer_paint = layer_paint;
   layer.dirty_region.Clear();
-  layer.reused_image = false;
-  layer.deferred_alpha = layer_paint.alpha;
-  if (parent.kind == StackEntry::Kind::kLayer && parent.dirty_region.IsEmpty() &&
-      PaintIsReusableOnEmptyLayer(layer_paint)) {
-    layer.image = parent.image;
-    layer.layer_origin = parent.layer_origin;
-    layer.reused_image = true;
-    layer.deferred_alpha = 1.0;
-  } else {
-    const BLBoxI local_clip = parent.clip_box;
-    const int width = std::max(1, local_clip.x1 - local_clip.x0);
-    const int height = std::max(1, local_clip.y1 - local_clip.y0);
-
-    BLImage layer_image(width, height, BL_FORMAT_PRGB32);
-    BLContext layer_ctx;
-    if (!BeginContext(&layer_ctx, layer_image, thread_count_)) {
-      layer_image.reset();
-    } else {
-      layer_ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
-      layer_ctx.clear_all();
-      layer_ctx.end();
-    }
-
-    layer.image = std::move(layer_image);
-    layer.layer_origin = BLPointI(local_clip.x0, local_clip.y0);
-  }
+  const BLBoxI local_clip = parent.clip_box;
+  layer.layer_origin = BLPointI(local_clip.x0, local_clip.y0);
+  layer.image = CreateClearedImage(std::max(1, local_clip.x1 - local_clip.x0),
+      std::max(1, local_clip.y1 - local_clip.y0), thread_count_);
   if (!parent.clip_mask.is_empty()) {
     layer.clip_mask = parent.clip_mask;
     layer.clip_mask_origin = parent.clip_mask_origin;
@@ -614,8 +577,6 @@ void Canvas::Restore() {
   if (top.kind == StackEntry::Kind::kState) {
     Current(this).image = std::move(top.image);
     Current(this).dirty_region = std::move(top.dirty_region);
-    Current(this).reused_image = top.reused_image;
-    Current(this).deferred_alpha = top.deferred_alpha;
     ReattachContext(this);
     return;
   }
@@ -625,8 +586,9 @@ void Canvas::Restore() {
     return;
   }
 
-  if (top.reused_image) {
+  if (CanAdoptLayerIntoParent(Current(this), top)) {
     Current(this).image = std::move(top.image);
+    Current(this).layer_origin = top.layer_origin;
     Current(this).dirty_region.Union(top.dirty_region);
     ReattachContext(this);
     return;
@@ -635,7 +597,6 @@ void Canvas::Restore() {
   ReattachContext(this);
 
   Paint paint = ResolvePaint(top.layer_paint ? &*top.layer_paint : nullptr);
-  paint.alpha = top.deferred_alpha;
   ConfigureContextForPaint(&ctx, paint);
   for (const BLBoxI &dirty_rect : top.dirty_region.Rects()) {
     const BLPointI dst_origin(dirty_rect.x0 - Current(this).layer_origin.x,
@@ -699,65 +660,18 @@ bool Canvas::HitTestPath(Path const &path, double hit_x, double hit_y) {
 
 void Canvas::DrawRect(
     double x, double y, double w, double h, Paint const *paint_) {
-  const Paint paint = ResolvePaint(paint_);
-  BLPath path = MakeRectPath(x, y, w, h);
-  BLPath device_path =
-      BuildRenderablePath(Current(this), path, BL_FILL_RULE_NON_ZERO, paint);
-  if (Current(this).clip_mask.is_empty()) {
-    const ResolvedStyle style = ResolveLocalStyle(
-        paint.shader, Current(this).transform, Current(this).layer_origin);
-    DrawDirect(this, paint, style, device_path, BL_FILL_RULE_NON_ZERO);
-    return;
-  }
-  const ResolvedStyle style =
-      ResolveStyle(paint.shader, Current(this).transform);
-  auto mask =
-      RasterizePathToMask(Current(this), device_path, BL_FILL_RULE_NON_ZERO,
-          thread_count_);
-  if (mask.has_value()) {
-    DrawMasked(this, paint, style, *mask);
-  }
+  DrawRenderablePath(
+      this, MakeRectPath(x, y, w, h), BL_FILL_RULE_NON_ZERO, paint_);
 }
 
 void Canvas::DrawRoundRect(double x, double y, double w, double h, double rx,
     double ry, Paint const *paint_) {
-  const Paint paint = ResolvePaint(paint_);
-  BLPath path = MakeRoundRectPath(x, y, w, h, rx, ry);
-  BLPath device_path =
-      BuildRenderablePath(Current(this), path, BL_FILL_RULE_NON_ZERO, paint);
-  if (Current(this).clip_mask.is_empty()) {
-    const ResolvedStyle style = ResolveLocalStyle(
-        paint.shader, Current(this).transform, Current(this).layer_origin);
-    DrawDirect(this, paint, style, device_path, BL_FILL_RULE_NON_ZERO);
-    return;
-  }
-  const ResolvedStyle style =
-      ResolveStyle(paint.shader, Current(this).transform);
-  auto mask =
-      RasterizePathToMask(Current(this), device_path, BL_FILL_RULE_NON_ZERO,
-          thread_count_);
-  if (mask.has_value()) {
-    DrawMasked(this, paint, style, *mask);
-  }
+  DrawRenderablePath(this, MakeRoundRectPath(x, y, w, h, rx, ry),
+      BL_FILL_RULE_NON_ZERO, paint_);
 }
 
 void Canvas::DrawPath(const Path &path, Paint *const paint_) {
-  const Paint paint = ResolvePaint(paint_);
-  BLPath device_path =
-      BuildRenderablePath(Current(this), path.bl, path.fill_rule, paint);
-  if (Current(this).clip_mask.is_empty()) {
-    const ResolvedStyle style = ResolveLocalStyle(
-        paint.shader, Current(this).transform, Current(this).layer_origin);
-    DrawDirect(this, paint, style, device_path, path.fill_rule);
-    return;
-  }
-  const ResolvedStyle style =
-      ResolveStyle(paint.shader, Current(this).transform);
-  auto mask =
-      RasterizePathToMask(Current(this), device_path, path.fill_rule, thread_count_);
-  if (mask.has_value()) {
-    DrawMasked(this, paint, style, *mask);
-  }
+  DrawRenderablePath(this, path.bl, path.fill_rule, paint_);
 }
 
 void Canvas::ClipRect(double x, double y, double w, double h) {
@@ -765,33 +679,27 @@ void Canvas::ClipRect(double x, double y, double w, double h) {
     const std::optional<BLBoxI> aligned =
         PixelAlignedDeviceRect(Current(this), x, y, w, h);
     if (aligned.has_value()) {
-      Current(this).clip_box = IntersectBoxes(Current(this).clip_box, *aligned);
-      Current(this).clip_origin = IsEmptyBox(Current(this).clip_box)
-          ? BLPointI(0, 0)
-          : BLPointI(Current(this).clip_box.x0, Current(this).clip_box.y0);
-      Current(this).clip_mask.reset();
-      Current(this).clip_mask_origin = BLPointI(0, 0);
+      SetRectClip(
+          &Current(this), IntersectBoxes(Current(this).clip_box, *aligned));
       SyncContextClip(this);
       return;
     }
   }
 
   BLPath path = MakeRectPath(x, y, w, h);
-  BLPath device_path =
-      BuildDevicePath(Current(this), path, BL_FILL_RULE_NON_ZERO);
+  BLPath device_path = BuildDevicePath(Current(this), path);
   ClipWithPath(this, device_path, BL_FILL_RULE_NON_ZERO);
 }
 
 void Canvas::ClipRoundRect(
     double x, double y, double w, double h, double rx, double ry) {
   BLPath path = MakeRoundRectPath(x, y, w, h, rx, ry);
-  BLPath device_path =
-      BuildDevicePath(Current(this), path, BL_FILL_RULE_NON_ZERO);
+  BLPath device_path = BuildDevicePath(Current(this), path);
   ClipWithPath(this, device_path, BL_FILL_RULE_NON_ZERO);
 }
 
 void Canvas::ClipPath(const Path &path) {
-  BLPath device_path = BuildDevicePath(Current(this), path.bl, path.fill_rule);
+  BLPath device_path = BuildDevicePath(Current(this), path.bl);
   ClipWithPath(this, device_path, path.fill_rule);
 }
 

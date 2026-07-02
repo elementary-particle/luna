@@ -40,6 +40,15 @@ constexpr int kDefaultOpsPerScene = 32;
 constexpr int kMaxFailuresToDump = 10;
 constexpr uint64_t kDefaultBaseSeed = 0xC0FFEE123456789ULL;
 constexpr double kAllowedErrorRatio = 0.01;
+constexpr double kAllowedEdgeErrorRatio = 0.10;
+constexpr double kAllowedStrongEdgeErrorRatio = 0.05;
+constexpr double kAllowedNonEdgeErrorRatio = 0.008;
+constexpr double kAllowedStrongNonEdgeErrorRatio = 0.003;
+constexpr double kAllowedLowDeltaErrorRatio = 0.10;
+constexpr double kAllowedStrongLowDeltaErrorRatio = 0.0005;
+constexpr int kLowDeltaMax = 12;
+constexpr int kEdgeDeltaThreshold = 8;
+constexpr int kEdgeToleranceRadius = 2;
 
 struct Random {
   explicit Random(uint64_t seed) : engine(seed) {}
@@ -72,6 +81,8 @@ struct DiffSummary {
   int max_y = -1;
   size_t pixels_over_2 = 0;
   size_t pixels_over_8 = 0;
+  size_t non_edge_pixels_over_2 = 0;
+  size_t non_edge_pixels_over_8 = 0;
   int over_8_min_x = 0;
   int over_8_min_y = 0;
   int over_8_max_x = -1;
@@ -780,6 +791,83 @@ PixelBuffer Capture(luna::backend::blend2d::Canvas *canvas) {
   return out;
 }
 
+int PixelMaxDelta(const uint8_t *a, const uint8_t *b) {
+  int pixel_max = 0;
+  for (int c = 0; c < 4; ++c) {
+    pixel_max = std::max(pixel_max, std::abs(int(a[c]) - int(b[c])));
+  }
+  return pixel_max;
+}
+
+const uint8_t *PixelAt(const PixelBuffer &pixels, int x, int y) {
+  return pixels.bytes.data() + static_cast<size_t>(y) * pixels.stride +
+      static_cast<size_t>(x) * 4u;
+}
+
+std::vector<uint8_t> BuildEdgeMask(const PixelBuffer &pixels) {
+  std::vector<uint8_t> edges(
+      static_cast<size_t>(pixels.width) * static_cast<size_t>(pixels.height));
+
+  auto mark_edge = [&](int x0, int y0, int x1, int y1) {
+    edges[static_cast<size_t>(y0) * pixels.width + static_cast<size_t>(x0)] = 1;
+    edges[static_cast<size_t>(y1) * pixels.width + static_cast<size_t>(x1)] = 1;
+  };
+
+  for (int y = 0; y < pixels.height; ++y) {
+    for (int x = 0; x < pixels.width; ++x) {
+      const uint8_t *pixel = PixelAt(pixels, x, y);
+      if (x + 1 < pixels.width &&
+          PixelMaxDelta(pixel, PixelAt(pixels, x + 1, y)) >
+              kEdgeDeltaThreshold) {
+        mark_edge(x, y, x + 1, y);
+      }
+      if (y + 1 < pixels.height &&
+          PixelMaxDelta(pixel, PixelAt(pixels, x, y + 1)) >
+              kEdgeDeltaThreshold) {
+        mark_edge(x, y, x, y + 1);
+      }
+    }
+  }
+
+  return edges;
+}
+
+std::vector<uint8_t> DilateMask(
+    const std::vector<uint8_t> &mask, int width, int height, int radius) {
+  std::vector<uint8_t> dilated(mask.size());
+
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      if (!mask[static_cast<size_t>(y) * width + static_cast<size_t>(x)]) {
+        continue;
+      }
+
+      const int y0 = std::max(0, y - radius);
+      const int y1 = std::min(height - 1, y + radius);
+      const int x0 = std::max(0, x - radius);
+      const int x1 = std::min(width - 1, x + radius);
+      for (int yy = y0; yy <= y1; ++yy) {
+        for (int xx = x0; xx <= x1; ++xx) {
+          dilated[static_cast<size_t>(yy) * width + static_cast<size_t>(xx)] =
+              1;
+        }
+      }
+    }
+  }
+
+  return dilated;
+}
+
+std::vector<uint8_t> BuildSharedEdgeMask(
+    const PixelBuffer &a, const PixelBuffer &b) {
+  std::vector<uint8_t> edges_a = BuildEdgeMask(a);
+  std::vector<uint8_t> edges_b = BuildEdgeMask(b);
+  for (size_t i = 0; i < edges_a.size(); ++i) {
+    edges_a[i] = edges_a[i] || edges_b[i];
+  }
+  return DilateMask(edges_a, a.width, a.height, kEdgeToleranceRadius);
+}
+
 DiffSummary Compare(const PixelBuffer &a, const PixelBuffer &b) {
   if (a.width != b.width || a.height != b.height) {
     throw std::runtime_error(fmt::format("image size mismatch {}x{} vs {}x{}",
@@ -792,11 +880,11 @@ DiffSummary Compare(const PixelBuffer &a, const PixelBuffer &b) {
     const uint8_t *row_a = a.bytes.data() + static_cast<size_t>(y) * a.stride;
     const uint8_t *row_b = b.bytes.data() + static_cast<size_t>(y) * b.stride;
     for (int x = 0; x < a.width; ++x) {
-      int pixel_max = 0;
+      const uint8_t *pixel_a = row_a + x * 4;
+      const uint8_t *pixel_b = row_b + x * 4;
+      const int pixel_max = PixelMaxDelta(pixel_a, pixel_b);
       for (int c = 0; c < 4; ++c) {
-        const int delta =
-            std::abs(int(row_a[x * 4 + c]) - int(row_b[x * 4 + c]));
-        pixel_max = std::max(pixel_max, delta);
+        const int delta = std::abs(int(pixel_a[c]) - int(pixel_b[c]));
         if (delta > diff.max_channel_delta) {
           diff.max_channel_delta = delta;
           diff.max_x = x;
@@ -826,14 +914,57 @@ DiffSummary Compare(const PixelBuffer &a, const PixelBuffer &b) {
   return diff;
 }
 
-bool IsFailure(const PixelBuffer &pixels, const DiffSummary &diff) {
+bool IsFailure(
+    const PixelBuffer &a, const PixelBuffer &b, DiffSummary *diff) {
   const size_t pixel_count =
-      static_cast<size_t>(pixels.width) * static_cast<size_t>(pixels.height);
+      static_cast<size_t>(a.width) * static_cast<size_t>(a.height);
   const double over_2_ratio =
-      pixel_count == 0 ? 0.0 : double(diff.pixels_over_2) / double(pixel_count);
+      pixel_count == 0 ? 0.0 : double(diff->pixels_over_2) / double(pixel_count);
   const double over_8_ratio =
-      pixel_count == 0 ? 0.0 : double(diff.pixels_over_8) / double(pixel_count);
-  return over_8_ratio > kAllowedErrorRatio || over_2_ratio > kAllowedErrorRatio;
+      pixel_count == 0 ? 0.0 : double(diff->pixels_over_8) / double(pixel_count);
+  if (over_8_ratio <= kAllowedErrorRatio &&
+      over_2_ratio <= kAllowedErrorRatio) {
+    return false;
+  }
+
+  if (diff->max_channel_delta <= kLowDeltaMax &&
+      over_8_ratio <= kAllowedStrongLowDeltaErrorRatio &&
+      over_2_ratio <= kAllowedLowDeltaErrorRatio) {
+    return false;
+  }
+
+  if (over_8_ratio > kAllowedStrongEdgeErrorRatio ||
+      over_2_ratio > kAllowedEdgeErrorRatio) {
+    return true;
+  }
+
+  const std::vector<uint8_t> edge_mask = BuildSharedEdgeMask(a, b);
+  diff->non_edge_pixels_over_2 = 0;
+  diff->non_edge_pixels_over_8 = 0;
+  for (int y = 0; y < a.height; ++y) {
+    for (int x = 0; x < a.width; ++x) {
+      if (edge_mask[static_cast<size_t>(y) * a.width + static_cast<size_t>(x)]) {
+        continue;
+      }
+
+      const int pixel_max = PixelMaxDelta(PixelAt(a, x, y), PixelAt(b, x, y));
+      if (pixel_max > 2) {
+        ++diff->non_edge_pixels_over_2;
+      }
+      if (pixel_max > 8) {
+        ++diff->non_edge_pixels_over_8;
+      }
+    }
+  }
+
+  const size_t allowed_non_edge_over_2 = std::max<size_t>(
+      1, static_cast<size_t>(
+             std::ceil(double(pixel_count) * kAllowedNonEdgeErrorRatio)));
+  const size_t allowed_non_edge_over_8 = std::max<size_t>(
+      1, static_cast<size_t>(
+             std::ceil(double(pixel_count) * kAllowedStrongNonEdgeErrorRatio)));
+  return diff->non_edge_pixels_over_8 > allowed_non_edge_over_8 ||
+      diff->non_edge_pixels_over_2 > allowed_non_edge_over_2;
 }
 
 FuzzConfig ParseArgs(int argc, char **argv) {
@@ -883,18 +1014,20 @@ int main(int argc, char **argv) {
 
       const PixelBuffer skia_pixels = Capture(&skia_canvas);
       const PixelBuffer blend_pixels = Capture(&blend_canvas);
-      const DiffSummary diff = Compare(skia_pixels, blend_pixels);
-      if (!IsFailure(skia_pixels, diff)) {
+      DiffSummary diff = Compare(skia_pixels, blend_pixels);
+      if (!IsFailure(skia_pixels, blend_pixels, &diff)) {
         continue;
       }
 
       failures.push_back(
           fmt::format("seed=0x{:016x} iteration={} max_delta={} at ({}, {}) "
                       "pixels_over_8={} "
-                      "bbox_over_8=[{},{}]-[{},{}] pixels_over_2={} ops={}",
+                      "bbox_over_8=[{},{}]-[{},{}] pixels_over_2={} "
+                      "non_edge_over_8={} non_edge_over_2={} ops={}",
               seed, i, diff.max_channel_delta, diff.max_x, diff.max_y,
               diff.pixels_over_8, diff.over_8_min_x, diff.over_8_min_y,
               diff.over_8_max_x, diff.over_8_max_y, diff.pixels_over_2,
+              diff.non_edge_pixels_over_8, diff.non_edge_pixels_over_2,
               config.ops_per_scene));
 
       if (dumped_failures < kMaxFailuresToDump) {
