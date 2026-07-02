@@ -22,8 +22,6 @@ namespace {
 using FrameClock = std::chrono::steady_clock;
 using Seconds = std::chrono::duration<double>;
 
-constexpr auto kFrameDelaySpinThreshold = std::chrono::microseconds(250);
-
 FrameClock::duration ToClockDuration(Seconds duration) {
   return std::chrono::duration_cast<FrameClock::duration>(duration);
 }
@@ -38,21 +36,12 @@ Uint64 ToNanoseconds(FrameClock::duration duration) {
 }
 
 FrameClock::time_point DelayUntil(FrameClock::time_point deadline) {
-  while (true) {
-    const auto now = FrameClock::now();
-    if (now >= deadline) {
-      return now;
-    }
-
-    const auto remaining = deadline - now;
-    if (remaining > kFrameDelaySpinThreshold) {
-      ZoneScopedN("FrameDelay");
-      SDL_DelayPrecise(ToNanoseconds(remaining - kFrameDelaySpinThreshold));
-      continue;
-    }
-
-    SDL_CPUPauseInstruction();
+  const auto now = FrameClock::now();
+  if (now < deadline) {
+    ZoneScopedN("FrameDelay");
+    SDL_DelayPrecise(ToNanoseconds(deadline - now));
   }
+  return FrameClock::now();
 }
 
 } // namespace
