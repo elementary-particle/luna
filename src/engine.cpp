@@ -673,8 +673,9 @@ int Engine::L_SetWindowSize(lua_State *L) {
         L, "set_window_size: must be called before starting any coroutines");
   }
   if (!e->renderer_->SetWindowSize(width, height)) {
-    return luaL_error(
-        L, "set_window_size: failed to resize window: %s", SDL_GetError());
+    return luaL_error(L,
+        "set_window_size: failed to set logical window size: %s",
+        SDL_GetError());
   }
   return 0;
 }

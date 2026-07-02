@@ -50,7 +50,7 @@ private:
 
   void CreatePresentationResources();
   void DestroyPresentationResources();
-  bool UpdateWindowMetrics(bool *changed = nullptr);
+  void UpdateWindowTransform() override;
   bool EnsureGraphicsReady();
   void RecreatePresentationResources();
   bool LockFramebufferTexture();
@@ -71,10 +71,6 @@ private:
   int locked_texture_pitch_ = 0;
   bool clear_locked_texture_ = false;
 
-  int canvas_width_ = 1280;
-  int canvas_height_ = 720;
-  float canvas_scale_x_ = 1.0f;
-  float canvas_scale_y_ = 1.0f;
   BLMatrix2D window_to_surface_transform_ = BLMatrix2D::make_identity();
   bool graphics_ready_ = false;
   bool frame_active_ = false;
@@ -92,7 +88,6 @@ public:
   bool BeginFrame(lua_State *L) override;
   bool EndFrame() override;
   void BindLua(lua_State *L) override;
-  bool SetWindowSize(int width, int height) override;
   bool HasFatalError() const override { return fatal_error_; }
   const std::string &GetFatalError() const override {
     return fatal_error_message_;

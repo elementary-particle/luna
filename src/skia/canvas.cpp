@@ -97,7 +97,12 @@ void Canvas::Font::SetStyle(int weight, int width, int slant) {
   style = SkFontStyle(weight, width, static_cast<SkFontStyle::Slant>(slant));
 }
 
-void Canvas::Clear(uint32_t color) { sk_->clear(static_cast<SkColor>(color)); }
+void Canvas::Clear(uint32_t color) {
+  SkPaint paint;
+  paint.setColor(static_cast<SkColor>(color));
+  paint.setBlendMode(SkBlendMode::kSrc);
+  sk_->drawPaint(paint);
+}
 
 void Canvas::Save() { sk_->save(); }
 

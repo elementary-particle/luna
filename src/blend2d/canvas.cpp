@@ -520,7 +520,15 @@ void Canvas::Clear(uint32_t color) {
   ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
   ctx.set_global_alpha(1.0);
   if (Current(this).clip_mask.is_empty()) {
-    ctx.fill_all(BLRgba32(color));
+    const BLBoxI local_clip = LocalClipBox(Current(this));
+    if (IsEmptyBox(local_clip)) {
+      return;
+    }
+    if (local_clip == MakeFullImageBox(Current(this).image)) {
+      ctx.fill_all(BLRgba32(color));
+    } else {
+      ctx.fill_rect(BoxToRect(local_clip), BLRgba32(color));
+    }
     MarkCurrentDirty(this, Current(this).clip_box);
     return;
   }

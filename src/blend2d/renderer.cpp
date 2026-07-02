@@ -52,9 +52,10 @@ bool Blend2dRenderer::Init() {
   }
 
   log::Info("renderer",
-      "window created size={}x{} canvas={}x{} scale={:.2f}x{:.2f} threads={}",
-      window_width_, window_height_, canvas_width_, canvas_height_,
-      canvas_scale_x_, canvas_scale_y_, thread_count_);
+      "window created logical={}x{} pixels={}x{} scale={:.2f} "
+      "threads={}",
+      logical_width_, logical_height_, pixel_width_, pixel_height_,
+      pixel_viewport_.scale, thread_count_);
   return true;
 }
 
@@ -83,7 +84,7 @@ void Blend2dRenderer::CreatePresentationResources() {
   locked_texture_pitch_ = 0;
 
   texture_ = SDL_CreateTexture(sdl_renderer_, SDL_PIXELFORMAT_ARGB8888,
-      SDL_TEXTUREACCESS_STREAMING, canvas_width_, canvas_height_);
+      SDL_TEXTUREACCESS_STREAMING, pixel_width_, pixel_height_);
   if (!texture_) {
     throw std::runtime_error(fmt::format(
         "SDL_CreateTexture failed: {}", SDL_GetError()));
@@ -104,54 +105,9 @@ void Blend2dRenderer::DestroyPresentationResources() {
   }
 }
 
-bool Blend2dRenderer::UpdateWindowMetrics(bool *changed) {
-  if (changed) {
-    *changed = false;
-  }
-  if (!window_) {
-    return false;
-  }
-
-  int window_width = 0;
-  int window_height = 0;
-  if (!SDL_GetWindowSize(window_, &window_width, &window_height)) {
-    log::Error("renderer", "SDL_GetWindowSize failed: {}", SDL_GetError());
-    return false;
-  }
-
-  int canvas_width = 0;
-  int canvas_height = 0;
-  if (!SDL_GetWindowSizeInPixels(window_, &canvas_width, &canvas_height)) {
-    log::Error(
-        "renderer", "SDL_GetWindowSizeInPixels failed: {}", SDL_GetError());
-    return false;
-  }
-
-  if (window_width <= 0 || window_height <= 0 || canvas_width <= 0 ||
-      canvas_height <= 0) {
-    log::Warn("renderer",
-        "ignoring non-positive window/canvas size window={}x{} canvas={}x{}",
-        window_width, window_height, canvas_width, canvas_height);
-    return false;
-  }
-
-  const bool metrics_changed = window_width_ != window_width ||
-      window_height_ != window_height || canvas_width_ != canvas_width ||
-      canvas_height_ != canvas_height;
-  window_width_ = window_width;
-  window_height_ = window_height;
-  canvas_width_ = canvas_width;
-  canvas_height_ = canvas_height;
-  canvas_scale_x_ =
-      static_cast<float>(canvas_width_) / static_cast<float>(window_width_);
-  canvas_scale_y_ =
-      static_cast<float>(canvas_height_) / static_cast<float>(window_height_);
-  window_to_surface_transform_ =
-      BLMatrix2D::make_scaling(canvas_scale_x_, canvas_scale_y_);
-  if (changed) {
-    *changed = metrics_changed;
-  }
-  return true;
+void Blend2dRenderer::UpdateWindowTransform() {
+  window_to_surface_transform_ = BLMatrix2D(pixel_viewport_.scale, 0.0, 0.0,
+      pixel_viewport_.scale, pixel_viewport_.x, pixel_viewport_.y);
 }
 
 bool Blend2dRenderer::EnsureGraphicsReady() {
@@ -188,9 +144,10 @@ void Blend2dRenderer::RecreatePresentationResources() {
 
   swapchain_dirty_ = false;
   log::Info("renderer",
-      "recreated presentation resources window={}x{} canvas={}x{} scale={:.2f}x{:.2f}",
-      window_width_, window_height_, canvas_width_, canvas_height_,
-      canvas_scale_x_, canvas_scale_y_);
+      "recreated presentation resources logical={}x{} pixels={}x{} "
+      "scale={:.2f}",
+      logical_width_, logical_height_, pixel_width_, pixel_height_,
+      pixel_viewport_.scale);
 }
 
 bool Blend2dRenderer::LockFramebufferTexture() {
@@ -213,10 +170,10 @@ bool Blend2dRenderer::LockFramebufferTexture() {
   if (clear_locked_texture_) {
     std::memset(locked_texture_pixels_, 0,
         static_cast<size_t>(locked_texture_pitch_) *
-            static_cast<size_t>(canvas_height_));
+            static_cast<size_t>(pixel_height_));
     clear_locked_texture_ = false;
   }
-  if (framebuffer_.create_from_data(canvas_width_, canvas_height_,
+  if (framebuffer_.create_from_data(pixel_width_, pixel_height_,
           BL_FORMAT_PRGB32, locked_texture_pixels_, locked_texture_pitch_) !=
       BL_SUCCESS) {
     UnlockFramebufferTexture();
@@ -297,6 +254,7 @@ bool Blend2dRenderer::BeginFrame(lua_State *L) {
     auto *canvas = lua::Check<Canvas>(L, -1);
     canvas->Init(std::move(framebuffer_), font_mgr_, window_to_surface_transform_,
         thread_count_);
+    canvas->ClipRect(0.0, 0.0, logical_width_, logical_height_);
   }
   lua_pop(L, 1);
   frame_active_ = true;
@@ -465,33 +423,6 @@ void Blend2dRenderer::BindLua(lua_State *L) {
   lua_pushvalue(L, -1);
   window_canvas_ref_ = luaL_ref(L, LUA_REGISTRYINDEX);
   lua_setfield(L, -2, "window");
-}
-
-bool Blend2dRenderer::SetWindowSize(int width, int height) {
-  if (width <= 0 || height <= 0) {
-    return false;
-  }
-  if (!window_) {
-    window_width_ = width;
-    window_height_ = height;
-    canvas_width_ = width;
-    canvas_height_ = height;
-    canvas_scale_x_ = 1.0f;
-    canvas_scale_y_ = 1.0f;
-    window_to_surface_transform_ = BLMatrix2D::make_identity();
-    return true;
-  }
-
-  if (!SDL_SetWindowSize(window_, width, height)) {
-    return false;
-  }
-
-  if (!UpdateWindowMetrics()) {
-    return false;
-  }
-
-  swapchain_dirty_ = true;
-  return true;
 }
 
 } // namespace luna::backend::blend2d

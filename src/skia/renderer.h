@@ -79,7 +79,7 @@ private:
   void InitSkia();
   void FiniSkia();
   void DestroySwapchain();
-  bool UpdateWindowMetrics(bool *changed = nullptr);
+  void UpdateWindowTransform() override;
   bool EnsureGraphicsReady();
   void RecreateSwapchain();
   void SetFatalError(std::string message);
@@ -131,10 +131,6 @@ private:
   std::unique_ptr<skgpu::graphite::Recorder> sk_recorder_;
   sk_sp<SkFontMgr> font_mgr_;
 
-  int canvas_width_ = 1280;
-  int canvas_height_ = 720;
-  float canvas_scale_x_ = 1.0f;
-  float canvas_scale_y_ = 1.0f;
   SkMatrix window_to_surface_matrix_ = SkMatrix::I();
   bool graphics_ready_ = false;
   bool frame_active_ = false;
@@ -151,7 +147,6 @@ public:
   bool BeginFrame(lua_State *L) override;
   bool EndFrame() override;
   void BindLua(lua_State *L) override;
-  bool SetWindowSize(int width, int height) override;
   bool HasFatalError() const override { return fatal_error_; }
   const std::string &GetFatalError() const override {
     return fatal_error_message_;

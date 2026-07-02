@@ -15,6 +15,7 @@
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkColorSpace.h>
 #include <skia/core/SkFontScanner.h>
+#include <skia/core/SkRect.h>
 #include <skia/gpu/MutableTextureState.h>
 #include <skia/gpu/graphite/BackendSemaphore.h>
 #include <skia/gpu/graphite/ContextOptions.h>
@@ -120,9 +121,9 @@ bool SkiaRenderer::Init() {
   }
 
   log::Info("renderer",
-      "window created size={}x{} canvas={}x{} scale={:.2f}x{:.2f}",
-      window_width_, window_height_, canvas_width_, canvas_height_,
-      canvas_scale_x_, canvas_scale_y_);
+      "window created logical={}x{} pixels={}x{} scale={:.2f}",
+      logical_width_, logical_height_, pixel_width_, pixel_height_,
+      pixel_viewport_.scale);
 
   log::Info("renderer", "initialized window state; graphics init deferred");
   return true;
@@ -394,9 +395,9 @@ void SkiaRenderer::CreateSwapchain() {
       std::numeric_limits<uint32_t>::max()) {
     surface_extent_ = surface_caps.currentExtent;
   } else {
-    surface_extent_.width = std::clamp(static_cast<uint32_t>(canvas_width_),
+    surface_extent_.width = std::clamp(static_cast<uint32_t>(pixel_width_),
         surface_caps.minImageExtent.width, surface_caps.maxImageExtent.width);
-    surface_extent_.height = std::clamp(static_cast<uint32_t>(canvas_height_),
+    surface_extent_.height = std::clamp(static_cast<uint32_t>(pixel_height_),
         surface_caps.minImageExtent.height, surface_caps.maxImageExtent.height);
   }
 
@@ -676,6 +677,10 @@ bool SkiaRenderer::BeginFrame(lua_State *L) {
     return false;
   }
   sk->setMatrix(window_to_surface_matrix_);
+  sk->clipRect(
+      SkRect::MakeWH(static_cast<SkScalar>(logical_width_),
+          static_cast<SkScalar>(logical_height_)),
+      SkClipOp::kIntersect, true);
 
   lua_rawgeti(L, LUA_REGISTRYINDEX, window_canvas_ref_);
   if (!lua_isnil(L, -1)) {
@@ -911,55 +916,11 @@ bool SkiaRenderer::EndFrame() {
   return true;
 }
 
-bool SkiaRenderer::UpdateWindowMetrics(bool *changed) {
-  if (changed) {
-    *changed = false;
-  }
-  if (!window_) {
-    return false;
-  }
-
-  int window_width = 0;
-  int window_height = 0;
-  if (!SDL_GetWindowSize(window_, &window_width, &window_height)) {
-    log::Error("renderer", "SDL_GetWindowSize failed: {}", SDL_GetError());
-    return false;
-  }
-
-  int canvas_width = 0;
-  int canvas_height = 0;
-  if (!SDL_GetWindowSizeInPixels(window_, &canvas_width, &canvas_height)) {
-    log::Error(
-        "renderer", "SDL_GetWindowSizeInPixels failed: {}", SDL_GetError());
-    return false;
-  }
-
-  if (window_width <= 0 || window_height <= 0 || canvas_width <= 0 ||
-      canvas_height <= 0) {
-    log::Warn("renderer",
-        "ignoring non-positive window/canvas size window={}x{} canvas={}x{}",
-        window_width, window_height, canvas_width, canvas_height);
-    return false;
-  }
-
-  const bool metrics_changed = window_width_ != window_width ||
-      window_height_ != window_height || canvas_width_ != canvas_width ||
-      canvas_height_ != canvas_height;
-
-  window_width_ = window_width;
-  window_height_ = window_height;
-  canvas_width_ = canvas_width;
-  canvas_height_ = canvas_height;
-  canvas_scale_x_ =
-      static_cast<float>(canvas_width_) / static_cast<float>(window_width_);
-  canvas_scale_y_ =
-      static_cast<float>(canvas_height_) / static_cast<float>(window_height_);
-  window_to_surface_matrix_ = SkMatrix::Scale(canvas_scale_x_, canvas_scale_y_);
-
-  if (changed) {
-    *changed = metrics_changed;
-  }
-  return true;
+void SkiaRenderer::UpdateWindowTransform() {
+  window_to_surface_matrix_.setAll(static_cast<SkScalar>(pixel_viewport_.scale),
+      0.0f, static_cast<SkScalar>(pixel_viewport_.x), 0.0f,
+      static_cast<SkScalar>(pixel_viewport_.scale),
+      static_cast<SkScalar>(pixel_viewport_.y), 0.0f, 0.0f, 1.0f);
 }
 
 bool SkiaRenderer::EnsureGraphicsReady() {
@@ -1000,9 +961,9 @@ void SkiaRenderer::RecreateSwapchain() {
   }
   swapchain_dirty_ = false;
   log::Info("renderer",
-      "recreated swapchain window={}x{} canvas={}x{} scale={:.2f}x{:.2f}",
-      window_width_, window_height_, canvas_width_, canvas_height_,
-      canvas_scale_x_, canvas_scale_y_);
+      "recreated swapchain logical={}x{} pixels={}x{} scale={:.2f}",
+      logical_width_, logical_height_, pixel_width_, pixel_height_,
+      pixel_viewport_.scale);
 }
 
 std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadImageJob(asset::Vfs *vfs) {
@@ -1131,40 +1092,6 @@ void SkiaRenderer::BindLua(lua_State *L) {
   lua_pushvalue(L, -1);
   window_canvas_ref_ = luaL_ref(L, LUA_REGISTRYINDEX);
   lua_setfield(L, -2, "window");
-}
-
-bool SkiaRenderer::SetWindowSize(int width, int height) {
-  if (width <= 0 || height <= 0) {
-    return false;
-  }
-  if (!window_) {
-    window_width_ = width;
-    window_height_ = height;
-    canvas_width_ = width;
-    canvas_height_ = height;
-    canvas_scale_x_ = 1.0f;
-    canvas_scale_y_ = 1.0f;
-    window_to_surface_matrix_ = SkMatrix::I();
-    return true;
-  }
-
-  if (!SDL_SetWindowSize(window_, width, height)) {
-    return false;
-  }
-
-  if (!UpdateWindowMetrics()) {
-    return false;
-  }
-
-  if (graphics_ready_) {
-    swapchain_dirty_ = true;
-  }
-
-  log::Info("renderer",
-      "window size set to {}x{} canvas={}x{} scale={:.2f}x{:.2f}",
-      window_width_, window_height_, canvas_width_, canvas_height_,
-      canvas_scale_x_, canvas_scale_y_);
-  return true;
 }
 
 } // namespace luna::backend::skia
