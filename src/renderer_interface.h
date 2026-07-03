@@ -4,11 +4,10 @@
 #include <SDL3/SDL.h>
 
 #include <memory>
-#include <optional>
 #include <string>
-#include <vector>
 
 #include "factory.h"
+#include "input_system.h"
 #include "lua_util.hpp"
 
 namespace luna {
@@ -19,12 +18,6 @@ class Vfs;
 
 class Renderer {
 protected:
-  struct PolledEvent {
-    std::string type;
-    std::optional<std::string> button;
-    double x = 0.0;
-    double y = 0.0;
-  };
   struct AspectFit {
     double x = 0.0;
     double y = 0.0;
@@ -36,7 +29,7 @@ protected:
   bool InitSdl(SDL_WindowFlags extra_window_flags = 0);
   void FiniSdl();
   void PumpSdlEvents();
-  static int L_PollSdlEvents(lua_State *L);
+  InputSystem::CoordinateSpace GetInputCoordinateSpace() const;
   virtual void ConvertEventCoordinates(double *x, double *y) const;
   bool UpdateWindowMetrics(bool *changed = nullptr);
   virtual void UpdateWindowTransform() = 0;
@@ -51,7 +44,7 @@ protected:
   AspectFit pixel_viewport_;
   SDL_Window *window_ = nullptr;
   bool swapchain_dirty_ = false;
-  std::vector<PolledEvent> polled_events_;
+  InputSystem input_;
 
 public:
   virtual ~Renderer() = default;

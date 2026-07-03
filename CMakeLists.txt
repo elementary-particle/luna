@@ -38,6 +38,7 @@ set(LUNA_SOURCES
   src/main.cpp
   src/engine.cpp
   src/factory.cpp
+  src/input_system.cpp
   src/log.cpp
   src/lua_json.cpp
   src/mixer.cpp
@@ -111,6 +112,19 @@ if(BUILD_TESTING)
   target_compile_definitions(
     luna_asset_vfs_test PRIVATE LUNA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME luna_asset_vfs_test COMMAND luna_asset_vfs_test)
+
+  add_executable(
+    luna_input_system_test
+    test/input_system.cpp
+    src/input_system.cpp
+  )
+  target_include_directories(luna_input_system_test PRIVATE src)
+  target_link_libraries(
+    luna_input_system_test PRIVATE
+    SDL3::SDL3
+    luajit::lib
+  )
+  add_test(NAME luna_input_system_test COMMAND luna_input_system_test)
 endif()
 
 if(LUNA_BACKEND_SKIA)

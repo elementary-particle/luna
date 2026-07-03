@@ -410,9 +410,7 @@ void Blend2dRenderer::BindLua(lua_State *L) {
 
   LCanvas<Backend>::Bind(L);
 
-  lua_pushlightuserdata(L, this);
-  lua_pushcclosure(L, &L_PollSdlEvents, 1);
-  lua_setfield(L, -2, "poll_events");
+  input_.BindLua(L);
 
   lua_pushlightuserdata(L, this);
   lua_pushcclosure(L, &L_MakeCanvas, 1);

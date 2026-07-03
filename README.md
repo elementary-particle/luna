@@ -166,7 +166,8 @@ luna.start(main)
 The `luna` module currently exposes helpers in a few main areas:
 
 - Engine: `start`, `next_frame`, `make_event`, `wait`, `now`, `after`, `set_frame_time`, `set_window_size`
-- Rendering: `poll_events`, `make_canvas`, `window`
+- Rendering: `poll_events` compatibility wrapper, `make_canvas`, `window`
+- Input: `input.poll_events`, keyboard state/text input helpers, mouse state/capture helpers, touch device/finger queries, and SDL3 gamepad state/rumble/LED/sensor helpers
 - Async asset loading: `load_image`, `load_fontface`, `load_audio`
 - Audio: `audio.track_create`, `audio.track_destroy`, `audio.track_set`, `audio.track_play`, `audio.track_stop`, `audio.track_playing`, `audio.track_stop_event`, `audio.track_set_gain`, `audio.set_mixer_gain`
 - Save data: `save.write_json`, `save.read_json`, `save.root`
