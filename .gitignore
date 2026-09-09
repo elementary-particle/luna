@@ -4,3 +4,21 @@
 /docs/example
 /build
 /vendor/luajit
+
+# C/C++ build outputs
+/bin
+/obj
+/out
+*.o
+*.so
+*.a
+*.exe
+*.dll
+*.log
+.env*
+.vscode
+.idea
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
