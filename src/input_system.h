@@ -104,7 +104,6 @@ private:
   };
 
   static int L_PollEvents(lua_State *L);
-  static int L_PollLegacyEvents(lua_State *L);
   static int L_IsKeyDown(lua_State *L);
   static int L_Modifiers(lua_State *L);
   static int L_StartTextInput(lua_State *L);
@@ -130,9 +129,8 @@ private:
   static int L_GamepadSensorData(lua_State *L);
   static int L_GamepadTouchpads(lua_State *L);
 
-  void PushEvents(lua_State *L, bool legacy);
+  void PushEvents(lua_State *L);
   void PushEvent(lua_State *L, const InputEvent &event) const;
-  void PushLegacyEvent(lua_State *L, const InputEvent &event) const;
   void OpenGamepad(SDL_JoystickID id);
   void RemoveGamepad(SDL_JoystickID id);
   SDL_Gamepad *FindGamepad(SDL_JoystickID id) const;

@@ -627,20 +627,20 @@ end
 local function pump_events()
   state.click = false
 
-  for _, event in ipairs(luna.poll_events()) do
+  for _, event in ipairs(luna.input.poll_events()) do
     if event.type == "quit" then
       return false
     end
 
-    if event.type == "mouse_move" then
+    if event.type == "mouse_motion" then
       state.mouse_x = event.x
       state.mouse_y = event.y
-    elseif event.type == "mouse_down" and event.button == "left" then
+    elseif event.type == "mouse_button_down" and event.button == "left" then
       state.mouse_x = event.x
       state.mouse_y = event.y
       state.mouse_down = true
       state.click = true
-    elseif event.type == "mouse_up" and event.button == "left" then
+    elseif event.type == "mouse_button_up" and event.button == "left" then
       state.mouse_x = event.x
       state.mouse_y = event.y
       state.mouse_down = false

@@ -864,56 +864,18 @@ void InputSystem::PushEvent(lua_State *L, const InputEvent &event) const {
   }
 }
 
-void InputSystem::PushLegacyEvent(lua_State *L, const InputEvent &event) const {
-  lua_newtable(L);
-  if (event.type == "quit") {
-    lua_pushliteral(L, "quit");
-    lua_setfield(L, -2, "type");
-    return;
-  }
-
-  if (event.type == "mouse_motion") {
-    lua_pushliteral(L, "mouse_move");
-  } else if (event.type == "mouse_button_down") {
-    lua_pushliteral(L, "mouse_down");
-  } else {
-    lua_pushliteral(L, "mouse_up");
-  }
-  lua_setfield(L, -2, "type");
-  if (!event.button.empty()) {
-    lua_pushlstring(L, event.button.data(), event.button.size());
-    lua_setfield(L, -2, "button");
-  }
-  PushNumber(L, "x", event.x);
-  PushNumber(L, "y", event.y);
-}
-
-void InputSystem::PushEvents(lua_State *L, bool legacy) {
+void InputSystem::PushEvents(lua_State *L) {
   lua_newtable(L);
   int out_i = 1;
   for (const InputEvent &event : events_) {
-    if (legacy) {
-      if (event.type != "quit" && event.type != "mouse_motion" &&
-          event.type != "mouse_button_down" &&
-          event.type != "mouse_button_up") {
-        continue;
-      }
-      PushLegacyEvent(L, event);
-    } else {
-      PushEvent(L, event);
-    }
+    PushEvent(L, event);
     lua_rawseti(L, -2, out_i++);
   }
   events_.clear();
 }
 
 int InputSystem::L_PollEvents(lua_State *L) {
-  CheckInput(L)->PushEvents(L, false);
-  return 1;
-}
-
-int InputSystem::L_PollLegacyEvents(lua_State *L) {
-  CheckInput(L)->PushEvents(L, true);
+  CheckInput(L)->PushEvents(L);
   return 1;
 }
 
@@ -1290,10 +1252,6 @@ void InputSystem::BindLua(lua_State *L) {
     lua_setfield(L, -2, entry.name);
   }
   lua_setfield(L, -2, "input");
-
-  lua_pushlightuserdata(L, this);
-  lua_pushcclosure(L, &InputSystem::L_PollLegacyEvents, 1);
-  lua_setfield(L, -2, "poll_events");
 }
 
 } // namespace luna

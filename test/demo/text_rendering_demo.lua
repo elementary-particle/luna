@@ -599,7 +599,7 @@ local function main()
   scene = build_scene(luna.window)
 
   while true do
-    local events = luna.poll_events()
+    local events = luna.input.poll_events()
     for _, event in ipairs(events) do
       if event.type == "quit" then
         return

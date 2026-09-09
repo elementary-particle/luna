@@ -28,6 +28,9 @@ LuaState MakeLuaWithInput(luna::test::HeadlessRenderer *renderer) {
   lua_newtable(L.get());
   assert(renderer->Init());
   renderer->BindLua(L.get());
+  lua_getfield(L.get(), -1, "poll_events");
+  assert(lua_isnil(L.get(), -1));
+  lua_pop(L.get(), 1);
   lua_setglobal(L.get(), "luna");
   return L;
 }
@@ -38,13 +41,6 @@ void PollInput(lua_State *L) {
   lua_getfield(L, -1, "poll_events");
   assert(lua_pcall(L, 0, 1, 0) == LUA_OK);
   lua_remove(L, -2);
-  lua_remove(L, -2);
-}
-
-void PollLegacy(lua_State *L) {
-  lua_getglobal(L, "luna");
-  lua_getfield(L, -1, "poll_events");
-  assert(lua_pcall(L, 0, 1, 0) == LUA_OK);
   lua_remove(L, -2);
 }
 
@@ -165,7 +161,7 @@ void TestPlayerNavigationKeys() {
   }
 }
 
-void TestLegacyEvents() {
+void TestQuitAndMouseEvents() {
   luna::test::HeadlessRenderer renderer;
   auto L = MakeLuaWithInput(&renderer);
 
@@ -180,13 +176,13 @@ void TestLegacyEvents() {
   mouse.button.y = 22.0f;
   renderer.InjectEvent(mouse);
 
-  PollLegacy(L.get());
+  PollInput(L.get());
   assert(lua_objlen(L.get(), -1) == 2);
   lua_rawgeti(L.get(), -1, 1);
   assert(FieldString(L.get(), -1, "type") == "quit");
   lua_pop(L.get(), 1);
   lua_rawgeti(L.get(), -1, 2);
-  assert(FieldString(L.get(), -1, "type") == "mouse_up");
+  assert(FieldString(L.get(), -1, "type") == "mouse_button_up");
   assert(FieldString(L.get(), -1, "button") == "left");
   assert(FieldNumber(L.get(), -1, "x") == 11.0);
   assert(FieldNumber(L.get(), -1, "y") == 22.0);
@@ -226,7 +222,7 @@ void TestLogicalSizeAndPolling() {
 int main() {
   TestRichEvents();
   TestPlayerNavigationKeys();
-  TestLegacyEvents();
+  TestQuitAndMouseEvents();
   TestLogicalSizeAndPolling();
   return 0;
 }

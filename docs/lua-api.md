@@ -3,12 +3,16 @@
 The `luna` module currently exposes helpers in a few main areas:
 
 - Engine: `start`, `next_frame`, `await`, `make_event`, `wait`, `now`, `after`, `set_frame_time`, `set_window_size`
-- Rendering: `poll_events` compatibility wrapper, `make_canvas`, `window`
+- Rendering: `make_canvas`, `window`
 - Input: `input.poll_events`, keyboard state/text input helpers, mouse state/capture helpers, touch device/finger queries, and SDL3 gamepad state/rumble/LED/sensor helpers
 - Assets: `assets:image`, `assets:font`, `assets:audio`; futures with `await`, `poll`, `result`, `event`
 - Audio: `audio.track_create`, `audio.track_destroy`, `audio.track_set`, `audio.track_play`, `audio.track_stop`, `audio.track_playing`, `audio.track_stop_event`, `audio.track_set_gain`, `audio.set_mixer_gain`
 - Files: `fs.game`, `fs.user`, `fs.cache`; independent `json.encode` / `json.decode`
 - Profiling: `tracy.begin_zone`, `tracy.end_zone` when Tracy is compiled in
+
+Poll events with `luna.input.poll_events()`. The top-level `luna.poll_events`
+API has been removed. Mouse events use `mouse_motion`, `mouse_button_down`,
+and `mouse_button_up`; coordinates and button names remain available.
 
 ## File VFS and save data
 
