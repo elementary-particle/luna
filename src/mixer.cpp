@@ -10,6 +10,72 @@
 
 namespace luna {
 
+struct AudioStreamSource {
+  std::mutex mutex;
+  std::unique_ptr<file::FileStream> stream;
+};
+
+namespace {
+// SDL owns this adapter until playback finishes. FileStream owns its source
+// handle/mapping, so neither a job nor a Lua future needs to stay alive.
+struct AudioCursor {
+  std::shared_ptr<AudioStreamSource> source;
+  uint64_t position = 0;
+};
+
+SDL_IOStream *OpenAudioIO(std::shared_ptr<AudioStreamSource> source) {
+  auto cursor = std::make_unique<AudioCursor>(std::move(source));
+  SDL_IOStreamInterface iface;
+  SDL_INIT_INTERFACE(&iface);
+  iface.size = [](void *p) -> Sint64 {
+    return static_cast<Sint64>(
+        static_cast<AudioCursor *>(p)->source->stream->info().size);
+  };
+  iface.seek = [](void *p, Sint64 offset, SDL_IOWhence whence) -> Sint64 {
+    auto *cursor = static_cast<AudioCursor *>(p);
+    auto size = cursor->source->stream->info().size;
+    uint64_t base = whence == SDL_IO_SEEK_SET ? 0
+        : whence == SDL_IO_SEEK_CUR           ? cursor->position
+                                              : size;
+    if ((offset < 0 && static_cast<uint64_t>(-(offset + 1)) + 1 > base) ||
+        (offset >= 0 && static_cast<uint64_t>(offset) > size - base)) {
+      SDL_SetError("seek outside audio source");
+      return -1;
+    }
+    cursor->position = base + offset;
+    return static_cast<Sint64>(cursor->position);
+  };
+  iface.read = [](void *p, void *out, size_t size,
+                   SDL_IOStatus *io_status) -> size_t {
+    auto *cursor = static_cast<AudioCursor *>(p);
+    auto &source = *cursor->source;
+    std::lock_guard lock(source.mutex);
+    size_t read = 0;
+    auto result = source.stream->Seek(
+        static_cast<int64_t>(cursor->position), std::ios::beg);
+    if (result)
+      result =
+          source.stream->Read({static_cast<std::byte *>(out), size}, &read);
+    cursor->position += read;
+    if (!result) {
+      SDL_SetError("%s", result.message().c_str());
+      *io_status = SDL_IO_STATUS_ERROR;
+    } else if (read < size)
+      *io_status =
+          source.stream->eof() ? SDL_IO_STATUS_EOF : SDL_IO_STATUS_READY;
+    return read;
+  };
+  iface.close = [](void *p) -> bool {
+    delete static_cast<AudioCursor *>(p);
+    return true;
+  };
+  auto *io = SDL_OpenIO(&iface, cursor.get());
+  if (io)
+    cursor.release();
+  return io;
+}
+} // namespace
+
 static constexpr const char *MIXER_PTR_KEY = "luna.mixer_ptr";
 
 void Mixer::MaybeDestroyAudio(LAudio *audio) {
@@ -20,6 +86,8 @@ void Mixer::MaybeDestroyAudio(LAudio *audio) {
     MIX_DestroyAudio(audio->audio);
     audio->audio = nullptr;
   }
+  if (audio->track_refs == 0 && audio->destroy_requested)
+    audio->streamed.reset();
 }
 
 void Mixer::ReleaseTrackAudio(lua_State *L, TrackState &track_state) {
@@ -91,7 +159,11 @@ void Mixer::Fini() {
 
 void Mixer::BindLua(lua_State *L) {
   if (lua::NewType<LAudio>(L)) {
-    lua_pushcfunction(L, &L_AudioDestroy);
+    lua_pushcfunction(L, [](lua_State *L) {
+      L_AudioDestroy(L);
+      lua::Check<LAudio>(L, 1)->~LAudio();
+      return 0;
+    });
     lua_setfield(L, -2, "__gc");
 
     lua_pushcfunction(L, &L_AudioDestroy);
@@ -142,32 +214,23 @@ void Mixer::BindLua(lua_State *L) {
   lua_setfield(L, -2, "audio");
 }
 
-std::unique_ptr<AsyncJob> Mixer::MakeLoadAudioJob(asset::Vfs *vfs) {
-  return std::make_unique<LoadAudioJob>(this, vfs);
+std::unique_ptr<AsyncJob> Mixer::MakeLoadAudioJob() {
+  return std::make_unique<LoadAudioJob>(this);
 }
 
-Mixer::LoadAudioJob::LoadAudioJob(Mixer *mixer, asset::Vfs *vfs) : vfs_(vfs) {
-  mixer_ = mixer->mixer_;
-}
+Mixer::LoadAudioJob::LoadAudioJob(Mixer *mixer) { mixer_ = mixer->mixer_; }
 
 void Mixer::LoadAudioJob::Invoke(lua_State *L) {
-  const char *path = luaL_checkstring(L, 1);
-  if (!path || !*path) {
-    luaL_error(L, "load_audio: path is empty");
-  }
-
-  path_ = path;
-  predecode_ = lua_toboolean(L, 2) != 0;
-  if (!vfs_) {
-    luaL_error(L, "load_audio: VFS is not available");
-  }
-  auto mapped = vfs_->MapFile(path_);
-  if (!mapped) {
-    luaL_error(L, "load_audio: failed to open file: %s", path);
-  }
-  mapping_ = std::move(mapped).value();
-  if (!mixer_) {
-    luaL_error(L, "audio mixer is not initialized");
+  input_ = AssetInput::Check(L, 2);
+  path_ = input_.path;
+  if (!lua_isnoneornil(L, 3)) {
+    luaL_checktype(L, 3, LUA_TTABLE);
+    lua_getfield(L, 3, "mode");
+    const char *modes[] = {"memory", "decode", "stream", nullptr};
+    int mode = luaL_checkoption(L, -1, "memory", modes);
+    lua_pop(L, 1);
+    predecode_ = mode == 1;
+    stream_ = mode == 2;
   }
 }
 
@@ -180,24 +243,37 @@ Mixer::LoadAudioJob::~LoadAudioJob() {
 
 void Mixer::LoadAudioJob::Run() {
   ZoneScopedN("LoadAudio");
-  SDL_IOStream *io = SDL_IOFromConstMem(
-      mapping_.data(), static_cast<size_t>(mapping_.size()));
+  source_ = std::make_shared<AudioStreamSource>();
+  status_ = input_.Open(&source_->stream);
+  if (!status_)
+    return;
+  SDL_IOStream *io = OpenAudioIO(source_);
   if (!io) {
-    error_ =
-        fmt::format("SDL_IOFromConstMem failed for {}: {}", path_,
-            SDL_GetError());
+    Fail(SDL_GetError());
     return;
   }
-  audio_ = MIX_LoadAudio_IO(mixer_, io, predecode_, true);
-  if (!audio_) {
-    error_ =
-        fmt::format("MIX_LoadAudio_IO failed for {}: {}", path_,
-            SDL_GetError());
+  if (stream_) {
+    // Validate the format without retaining a full compressed/PCM copy.
+    auto *decoder = MIX_CreateAudioDecoder_IO(io, true, 0);
+    if (decoder)
+      MIX_DestroyAudioDecoder(decoder);
+    else
+      DecodeError(path_,
+          fmt::format(
+              "invalid streamed audio '{}': {}", path_, SDL_GetError()));
+  } else {
+    audio_ = MIX_LoadAudio_IO(mixer_, io, predecode_, true);
+    if (!audio_)
+      DecodeError(path_,
+          fmt::format(
+              "failed to decode audio '{}': {}", path_, SDL_GetError()));
   }
 }
 
 int Mixer::LoadAudioJob::Finish(lua_State *L) {
   auto *ud = lua::New<LAudio>(L, audio_, 0, false);
+  if (stream_)
+    ud->streamed = std::move(source_);
   audio_ = nullptr;
   return 1;
 }
@@ -245,11 +321,18 @@ int Mixer::L_TrackSet(lua_State *L) {
   if (it == m->audio_tracks_.end()) {
     return luaL_error(L, "track not found: %llu", (unsigned long long)id);
   }
-  if (!audio->audio) {
+  if (audio->destroy_requested || (!audio->audio && !audio->streamed))
     return luaL_error(L, "audio handle is invalid");
-  }
 
-  if (!MIX_SetTrackAudio(it->second.track, audio->audio)) {
+  if (audio->streamed) {
+    SDL_IOStream *io = OpenAudioIO(audio->streamed);
+    if (!io)
+      return luaL_error(L, "audio.open: %s", SDL_GetError());
+    // Each track gets a distinct seek cursor; SDL closes it on
+    // replacement/destruction.
+    if (!MIX_SetTrackIOStream(it->second.track, io, true))
+      return luaL_error(L, "MIX_SetTrackIOStream failed: %s", SDL_GetError());
+  } else if (!MIX_SetTrackAudio(it->second.track, audio->audio)) {
     return luaL_error(L, "MIX_SetTrackAudio failed: %s", SDL_GetError());
   }
 

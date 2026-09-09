@@ -62,11 +62,12 @@ struct Task {
 
 class Engine {
 public:
-  explicit Engine(std::filesystem::path root = std::filesystem::current_path());
+  explicit Engine(std::filesystem::path root = std::filesystem::current_path(),
+      std::string game_id = "");
   ~Engine();
 
   bool Init();
-  bool Run(std::string_view entry_path = "main.lua");
+  bool Run(std::string_view entry_path = "");
 
   std::shared_ptr<EventState> CreateEvent() const;
   void SignalEvent(const std::shared_ptr<EventState> &event);
@@ -91,8 +92,7 @@ private:
     PromiseId id = 0;
     Settlement settlement = Settlement::PENDING;
     std::shared_ptr<EventState> event;
-    std::unique_ptr<AsyncJob> completed_job;
-    std::string error;
+    file::FileStatus error;
     std::vector<int> result_refs;
 
     ~PromiseState();
@@ -126,6 +126,7 @@ private:
   std::deque<Task *> tasks_;
   std::vector<Task *> next_frame_tasks_;
   int alive_task_count_ = 0;
+  bool script_failed_ = false;
   std::vector<TimerEntry> timers_;
 
   bool InitLua();
@@ -162,16 +163,34 @@ private:
 
   static int L_EventSignal(lua_State *L);
   static int L_PromisePoll(lua_State *L);
-  static int L_PromiseTake(lua_State *L);
+  static int L_PromiseResult(lua_State *L);
   static int L_PromiseEvent(lua_State *L);
 
   static inline int L_StartAsyncJob(
       lua_State *L, Engine *e, std::unique_ptr<AsyncJob> &&job) {
-    job->Invoke(L);
+    // Keep ownership outside Lua's protected call so argument errors cannot
+    // leak a partially captured job on platforms using longjmp.
+    const int arguments = lua_gettop(L);
+    lua_pushlightuserdata(L, job.get());
+    lua_pushcclosure(
+        L,
+        [](lua_State *L) {
+          auto *job =
+              static_cast<AsyncJob *>(lua_touserdata(L, lua_upvalueindex(1)));
+          job->Invoke(L);
+          return 0;
+        },
+        1);
+    for (int i = 1; i <= arguments; ++i)
+      lua_pushvalue(L, i);
+    if (lua_pcall(L, arguments, 0, 0) != 0) {
+      job.reset();
+      return lua_error(L);
+    }
 
     const PromiseId promise_id = e->factory_.EnqueueJob(std::move(job));
     auto promise = std::make_shared<PromiseState>();
-    promise->owner = L;
+    promise->owner = e->L_;
     promise->id = promise_id;
     promise->event = e->CreateEvent();
     e->pending_promises_[promise_id] = promise;

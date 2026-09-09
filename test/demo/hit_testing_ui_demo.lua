@@ -621,7 +621,7 @@ local function await_promise(promise)
   if not promise:poll() then
     luna.wait(promise:event())
   end
-  return promise:take()
+  return promise:result()
 end
 
 local function pump_events()
@@ -651,7 +651,7 @@ local function pump_events()
 end
 
 local function main()
-  await_promise(luna.load_fontface(font_path()))
+  await_promise(luna.assets:font(luna.fs.game:ref(font_path())))
   fonts = compile_fonts(luna.window)
   shapes = build_shapes(luna.window)
   paragraph_cache = {}

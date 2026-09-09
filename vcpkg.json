@@ -1,6 +1,7 @@
 {
   "dependencies": [
     "cli11",
+    "lz4",
     "fmt",
     {
       "name": "dbus",

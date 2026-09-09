@@ -1,4 +1,4 @@
-#include "input_system.h"
+#include "headless_renderer.h"
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_keycode.h>
@@ -22,11 +22,12 @@ struct LuaCloser {
 
 using LuaState = std::unique_ptr<lua_State, LuaCloser>;
 
-LuaState MakeLuaWithInput(luna::InputSystem *input) {
+LuaState MakeLuaWithInput(luna::test::HeadlessRenderer *renderer) {
   LuaState L(luaL_newstate());
   assert(L);
   lua_newtable(L.get());
-  input->BindLua(L.get());
+  assert(renderer->Init());
+  renderer->BindLua(L.get());
   lua_setglobal(L.get(), "luna");
   return L;
 }
@@ -70,10 +71,8 @@ bool FieldBool(lua_State *L, int index, const char *field) {
 }
 
 void TestRichEvents() {
-  luna::InputSystem input;
-  auto L = MakeLuaWithInput(&input);
-  luna::InputSystem::CoordinateSpace space{
-      nullptr, 1280, 720, 1280, 720, 0.0, 0.0, 1.0};
+  luna::test::HeadlessRenderer renderer;
+  auto L = MakeLuaWithInput(&renderer);
 
   SDL_Event key{};
   key.type = SDL_EVENT_KEY_DOWN;
@@ -86,7 +85,7 @@ void TestRichEvents() {
   key.key.raw = 30;
   key.key.down = true;
   key.key.repeat = true;
-  input.HandleEvent(key, space);
+  renderer.InjectEvent(key);
 
   SDL_Event mouse{};
   mouse.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
@@ -98,7 +97,7 @@ void TestRichEvents() {
   mouse.button.clicks = 2;
   mouse.button.x = 100.0f;
   mouse.button.y = 50.0f;
-  input.HandleEvent(mouse, space);
+  renderer.InjectEvent(mouse);
 
   SDL_Event touch{};
   touch.type = SDL_EVENT_FINGER_MOTION;
@@ -111,7 +110,7 @@ void TestRichEvents() {
   touch.tfinger.dx = 0.1f;
   touch.tfinger.dy = -0.2f;
   touch.tfinger.pressure = 0.75f;
-  input.HandleEvent(touch, space);
+  renderer.InjectEvent(touch);
 
   PollInput(L.get());
   assert(lua_objlen(L.get(), -1) == 3);
@@ -138,22 +137,48 @@ void TestRichEvents() {
   lua_pop(L.get(), 2);
 }
 
+void TestPlayerNavigationKeys() {
+  luna::test::HeadlessRenderer renderer;
+  auto L = MakeLuaWithInput(&renderer);
+  const struct {
+    SDL_Scancode scancode;
+    const char *name;
+  } keys[] = {
+      {SDL_SCANCODE_1, "1"}, {SDL_SCANCODE_RETURN, "return"},
+      {SDL_SCANCODE_SPACE, "space"}, {SDL_SCANCODE_ESCAPE, "escape"},
+      {SDL_SCANCODE_LEFT, "left"}, {SDL_SCANCODE_RIGHT, "right"},
+      {SDL_SCANCODE_PAGEUP, "pageup"}, {SDL_SCANCODE_PAGEDOWN, "pagedown"},
+      {SDL_SCANCODE_KP_ENTER, "keypad_enter"},
+  };
+  for (const auto &key : keys) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_KEY_DOWN;
+    event.key.scancode = key.scancode;
+    event.key.down = true;
+    renderer.InjectEvent(event);
+    PollInput(L.get());
+    assert(lua_objlen(L.get(), -1) == 1);
+    lua_rawgeti(L.get(), -1, 1);
+    assert(FieldString(L.get(), -1, "type") == "key_down");
+    assert(FieldString(L.get(), -1, "scancode") == key.name);
+    lua_pop(L.get(), 2);
+  }
+}
+
 void TestLegacyEvents() {
-  luna::InputSystem input;
-  auto L = MakeLuaWithInput(&input);
-  luna::InputSystem::CoordinateSpace space{
-      nullptr, 1280, 720, 1280, 720, 0.0, 0.0, 1.0};
+  luna::test::HeadlessRenderer renderer;
+  auto L = MakeLuaWithInput(&renderer);
 
   SDL_Event quit{};
   quit.type = SDL_EVENT_QUIT;
-  input.HandleEvent(quit, space);
+  renderer.InjectEvent(quit);
 
   SDL_Event mouse{};
   mouse.type = SDL_EVENT_MOUSE_BUTTON_UP;
   mouse.button.button = SDL_BUTTON_LEFT;
   mouse.button.x = 11.0f;
   mouse.button.y = 22.0f;
-  input.HandleEvent(mouse, space);
+  renderer.InjectEvent(mouse);
 
   PollLegacy(L.get());
   assert(lua_objlen(L.get(), -1) == 2);
@@ -168,10 +193,40 @@ void TestLegacyEvents() {
   lua_pop(L.get(), 2);
 }
 
+void TestLogicalSizeAndPolling() {
+  luna::test::HeadlessRenderer renderer;
+  auto L = MakeLuaWithInput(&renderer);
+  assert(renderer.SetWindowSize(640, 360));
+  assert(!renderer.SetWindowSize(0, 360));
+  assert(renderer.BeginFrame(L.get()));
+
+  SDL_Event touch{};
+  touch.type = SDL_EVENT_FINGER_DOWN;
+  touch.tfinger.x = 0.5f;
+  touch.tfinger.y = 0.25f;
+  renderer.InjectEvent(touch);
+
+  PollInput(L.get());
+  assert(lua_objlen(L.get(), -1) == 1);
+  lua_rawgeti(L.get(), -1, 1);
+  assert(FieldNumber(L.get(), -1, "x") == 320.0);
+  assert(FieldNumber(L.get(), -1, "y") == 90.0);
+  lua_pop(L.get(), 2);
+
+  PollInput(L.get());
+  assert(lua_objlen(L.get(), -1) == 0);
+  lua_pop(L.get(), 1);
+  assert(renderer.EndFrame());
+  renderer.ReleaseLua(L.get());
+  renderer.Fini();
+}
+
 } // namespace
 
 int main() {
   TestRichEvents();
+  TestPlayerNavigationKeys();
   TestLegacyEvents();
+  TestLogicalSizeAndPolling();
   return 0;
 }

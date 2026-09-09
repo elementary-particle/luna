@@ -25,7 +25,7 @@ public:
   struct RegisteredTypeface {
     sk_sp<SkTypeface> typeface;
     SkFontStyle style;
-    std::shared_ptr<const asset::MappedAsset> mapping;
+    std::shared_ptr<const file::MappedFile> mapping;
   };
 
   RegisteredFontStyleSet(
@@ -68,13 +68,13 @@ public:
       : loader_(SkFontMgr_New_Custom_Empty()),
         scanner_(SkFontScanner_Make_FreeType()) {}
 
-  bool RegisterFont(asset::MappedAsset mapping) {
+  bool RegisterFont(file::MappedFile mapping) {
     if (!loader_ || !scanner_ || mapping.size() == 0) {
       return false;
     }
 
     auto mapping_ref =
-        std::make_shared<const asset::MappedAsset>(std::move(mapping));
+        std::make_shared<const file::MappedFile>(std::move(mapping));
     std::unique_ptr<SkStreamAsset> stream = SkMemoryStream::MakeDirect(
         mapping_ref->data(), static_cast<size_t>(mapping_ref->size()));
     if (!stream) {
@@ -239,7 +239,7 @@ private:
   }
 
   bool RegisterTypeface(sk_sp<SkTypeface> typeface, const SkFontStyle &style,
-      std::shared_ptr<const asset::MappedAsset> mapping) const {
+      std::shared_ptr<const file::MappedFile> mapping) const {
     if (!typeface) {
       return false;
     }
@@ -287,7 +287,7 @@ sk_sp<SkFontMgr> MakeRuntimeFontManager() {
 }
 
 bool RegisterRuntimeFont(
-    const sk_sp<SkFontMgr> &font_mgr, asset::MappedAsset mapping) {
+    const sk_sp<SkFontMgr> &font_mgr, file::MappedFile mapping) {
   if (!font_mgr) {
     return false;
   }

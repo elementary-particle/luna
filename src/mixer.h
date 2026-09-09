@@ -1,8 +1,10 @@
 #ifndef LUNA_MIXER_H
 #define LUNA_MIXER_H
 
-#include "asset_vfs.h"
+#include "vfs.h"
+
 #include "factory.h"
+#include "file_vfs.h"
 
 #include <SDL3_mixer/SDL_mixer.h>
 
@@ -16,6 +18,7 @@ namespace luna {
 
 class Engine;
 struct EventState;
+struct AudioStreamSource;
 
 class Mixer {
 private:
@@ -24,6 +27,7 @@ private:
     MIX_Audio *audio = nullptr;
     uint32_t track_refs = 0;
     bool destroy_requested = false;
+    std::shared_ptr<AudioStreamSource> streamed;
   };
 
   struct TrackState {
@@ -35,7 +39,7 @@ private:
 
   class LoadAudioJob : public AsyncJob {
   public:
-    LoadAudioJob(Mixer *mixer, asset::Vfs *vfs);
+    LoadAudioJob(Mixer *mixer);
     ~LoadAudioJob() override;
     void Invoke(lua_State *L) override;
     void Run() override;
@@ -43,9 +47,10 @@ private:
 
   private:
     std::string path_;
-    asset::Vfs *vfs_ = nullptr;
-    asset::MappedAsset mapping_;
+    AssetInput input_;
+    std::shared_ptr<AudioStreamSource> source_;
     bool predecode_ = false;
+    bool stream_ = false;
     MIX_Mixer *mixer_ = nullptr;
     MIX_Audio *audio_ = nullptr;
   };
@@ -78,7 +83,7 @@ public:
 
   void BindLua(lua_State *L);
 
-  std::unique_ptr<AsyncJob> MakeLoadAudioJob(asset::Vfs *vfs);
+  std::unique_ptr<AsyncJob> MakeLoadAudioJob();
 };
 
 } // namespace luna

@@ -66,12 +66,11 @@ void Blend2dRenderer::CreatePresentationResources() {
   if (!sdl_renderer_) {
     sdl_renderer_ = SDL_CreateRenderer(window_, nullptr);
     if (!sdl_renderer_) {
-      throw std::runtime_error(fmt::format(
-          "SDL_CreateRenderer failed: {}", SDL_GetError()));
+      throw std::runtime_error(
+          fmt::format("SDL_CreateRenderer failed: {}", SDL_GetError()));
     }
     if (!SDL_SetRenderVSync(sdl_renderer_, 1)) {
-      log::Warn(
-          "renderer", "SDL_SetRenderVSync failed: {}", SDL_GetError());
+      log::Warn("renderer", "SDL_SetRenderVSync failed: {}", SDL_GetError());
     }
   }
 
@@ -86,8 +85,8 @@ void Blend2dRenderer::CreatePresentationResources() {
   texture_ = SDL_CreateTexture(sdl_renderer_, SDL_PIXELFORMAT_ARGB8888,
       SDL_TEXTUREACCESS_STREAMING, pixel_width_, pixel_height_);
   if (!texture_) {
-    throw std::runtime_error(fmt::format(
-        "SDL_CreateTexture failed: {}", SDL_GetError()));
+    throw std::runtime_error(
+        fmt::format("SDL_CreateTexture failed: {}", SDL_GetError()));
   }
   clear_locked_texture_ = true;
 }
@@ -174,8 +173,8 @@ bool Blend2dRenderer::LockFramebufferTexture() {
     clear_locked_texture_ = false;
   }
   if (framebuffer_.create_from_data(pixel_width_, pixel_height_,
-          BL_FORMAT_PRGB32, locked_texture_pixels_, locked_texture_pitch_) !=
-      BL_SUCCESS) {
+          BL_FORMAT_PRGB32, locked_texture_pixels_,
+          locked_texture_pitch_) != BL_SUCCESS) {
     UnlockFramebufferTexture();
     SetFatalError("failed to create Blend2D framebuffer from locked texture");
     return false;
@@ -252,8 +251,8 @@ bool Blend2dRenderer::BeginFrame(lua_State *L) {
   lua_rawgeti(L, LUA_REGISTRYINDEX, window_canvas_ref_);
   if (!lua_isnil(L, -1)) {
     auto *canvas = lua::Check<Canvas>(L, -1);
-    canvas->Init(std::move(framebuffer_), font_mgr_, window_to_surface_transform_,
-        thread_count_);
+    canvas->Init(std::move(framebuffer_), font_mgr_,
+        window_to_surface_transform_, thread_count_);
     canvas->ClipRect(0.0, 0.0, logical_width_, logical_height_);
   }
   lua_pop(L, 1);
@@ -301,32 +300,24 @@ bool Blend2dRenderer::EndFrame() {
   return true;
 }
 
-std::unique_ptr<AsyncJob> Blend2dRenderer::MakeLoadImageJob(asset::Vfs *vfs) {
-  return std::make_unique<LoadImageJob>(vfs);
+std::unique_ptr<AsyncJob> Blend2dRenderer::MakeLoadImageJob() {
+  return std::make_unique<LoadImageJob>();
 }
 
 void Blend2dRenderer::LoadImageJob::Invoke(lua_State *L) {
-  const char *path = luaL_checkstring(L, 1);
-  if (!path || !*path) {
-    luaL_error(L, "load_image: path is empty");
-  }
-  path_ = path;
-  if (!vfs_) {
-    luaL_error(L, "load_image: VFS is not available");
-  }
-  auto mapped = vfs_->MapFile(path_);
-  if (!mapped) {
-    luaL_error(L, "load_image: failed to open file: %s", path);
-  }
-  mapping_ = std::move(mapped).value();
+  input_ = AssetInput::Check(L, 2);
+  path_ = input_.path;
 }
 
 void Blend2dRenderer::LoadImageJob::Run() {
+  status_ = input_.Map(&mapping_);
+  if (!status_)
+    return;
   ZoneScopedN("LoadImage");
   if (image_.image.read_from_data(mapping_.data(),
           static_cast<size_t>(mapping_.size())) != BL_SUCCESS ||
       image_.image.is_empty()) {
-    error_ = fmt::format("failed to decode image: {}", path_);
+    DecodeError(path_, fmt::format("failed to decode image: {}", path_));
   }
 }
 
@@ -338,34 +329,28 @@ int Blend2dRenderer::LoadImageJob::Finish(lua_State *L) {
   return 3;
 }
 
-std::unique_ptr<AsyncJob> Blend2dRenderer::MakeLoadFontfaceJob(asset::Vfs *vfs) {
-  return std::make_unique<LoadFontfaceJob>(font_mgr_, vfs);
+std::unique_ptr<AsyncJob> Blend2dRenderer::MakeLoadFontfaceJob() {
+  return std::make_unique<LoadFontfaceJob>(font_mgr_);
 }
 
 void Blend2dRenderer::LoadFontfaceJob::Invoke(lua_State *L) {
-  const char *path = luaL_checkstring(L, 1);
-  if (!path || !*path) {
-    luaL_error(L, "register_font: path is empty");
-  }
-
-  path_ = path;
-  if (!vfs_) {
-    luaL_error(L, "register_font: VFS is not available");
-  }
-  auto mapped = vfs_->MapFile(path_);
-  if (!mapped) {
-    luaL_error(L, "register_font: failed to open file: %s", path);
-  }
-  mapping_ = std::move(mapped).value();
+  input_ = AssetInput::Check(L, 2);
+  path_ = input_.path;
 }
 
 void Blend2dRenderer::LoadFontfaceJob::Run() {
+  status_ = input_.Map(&mapping_);
+  if (!status_)
+    return;
   if (!RegisterRuntimeFont(&font_mgr_, std::move(mapping_))) {
-    error_ = fmt::format("failed to register font '{}'", path_);
+    DecodeError(path_, fmt::format("failed to register font '{}'", path_));
   }
 }
 
-int Blend2dRenderer::LoadFontfaceJob::Finish(lua_State * /*L*/) { return 0; }
+int Blend2dRenderer::LoadFontfaceJob::Finish(lua_State *L) {
+  lua_pushboolean(L, true);
+  return 1;
+}
 
 int Blend2dRenderer::L_MakeCanvas(lua_State *L) {
   auto *renderer =

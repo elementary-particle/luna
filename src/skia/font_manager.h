@@ -6,13 +6,13 @@
 #include <skia/core/SkFontMgr.h>
 #include <skia/core/SkFontStyle.h>
 
-#include "asset_vfs.h"
+#include "file_vfs.h"
 
 namespace luna::backend::skia {
 
 sk_sp<SkFontMgr> MakeRuntimeFontManager();
 bool RegisterRuntimeFont(const sk_sp<SkFontMgr> &font_mgr,
-                         asset::MappedAsset mapping);
+                         file::MappedFile mapping);
 
 } // namespace luna
 

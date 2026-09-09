@@ -12,9 +12,9 @@
 
 namespace luna {
 
-namespace asset {
+namespace file {
 class Vfs;
-} // namespace asset
+} // namespace file
 
 class Renderer {
 protected:
@@ -59,8 +59,8 @@ public:
   virtual bool HasFatalError() const = 0;
   virtual const std::string &GetFatalError() const = 0;
 
-  virtual std::unique_ptr<AsyncJob> MakeLoadImageJob(asset::Vfs *vfs) = 0;
-  virtual std::unique_ptr<AsyncJob> MakeLoadFontfaceJob(asset::Vfs *vfs) = 0;
+  virtual std::unique_ptr<AsyncJob> MakeLoadImageJob() = 0;
+  virtual std::unique_ptr<AsyncJob> MakeLoadFontfaceJob() = 0;
 };
 
 } // namespace luna

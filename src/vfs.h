@@ -1,40 +1,41 @@
 #ifndef LUNA_VFS_H
 #define LUNA_VFS_H
 
-struct lua_State;
-
-#include <filesystem>
-#include <string>
-
-#include "asset_vfs.h"
+#include "factory.h"
+#include <functional>
 
 namespace luna {
 
+// Capture on the Lua thread; resolve/open on a worker.
+struct AssetInput {
+  std::shared_ptr<file::FileSource> source;
+  std::string path;
+  file::MappedFile blob;
+  static AssetInput Check(lua_State *L, int index);
+  file::FileStatus Map(file::MappedFile *out) const;
+  file::FileStatus Open(std::unique_ptr<file::FileStream> *out) const;
+};
+
+void PushFileError(lua_State *L, const file::FileStatus &status);
+
 class Vfs {
 public:
-  explicit Vfs(std::filesystem::path root = std::filesystem::current_path());
-
-  std::string SaveRoot() const { return save_root_.string(); }
-  const std::filesystem::path &Root() const { return root_; }
-
-  asset::Vfs &assets() { return assets_; }
-  const asset::Vfs &assets() const { return assets_; }
-
-  void BindLua(lua_State *L);
-  std::filesystem::path ResolveSandboxedPath(const std::string &path) const;
+  using StartJob = std::function<int(lua_State *, std::unique_ptr<AsyncJob>)>;
+  explicit Vfs(std::string root = ".", std::string storage_root = "",
+      std::string game_id = "");
+  file::Vfs &files() { return *game_; }
+  const file::Vfs &files() const { return *game_; }
+  const std::string &UserRoot() const { return user_root_; }
+  const std::string &Entry() const { return entry_; }
+  void BindLua(lua_State *L, StartJob start);
+  void BindSearcher(lua_State *L);
 
 private:
-  static std::filesystem::path ResolvePathUnderRoot(
-      const std::filesystem::path &root, const std::filesystem::path &path);
-
-  std::filesystem::path root_;
-  std::filesystem::path save_root_;
-  asset::Vfs assets_;
-
-  static int L_SaveWriteJson(lua_State *L);
-  static int L_SaveReadJson(lua_State *L);
+  std::shared_ptr<file::Vfs> game_ = std::make_shared<file::Vfs>();
+  std::shared_ptr<file::FileSource> user_, cache_;
+  std::string user_root_, cache_root_;
+  std::string entry_ = "main.lua";
 };
 
 } // namespace luna
-
 #endif

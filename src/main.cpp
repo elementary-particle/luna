@@ -11,7 +11,7 @@ namespace {
 
 struct StartupOptions {
   std::filesystem::path root = std::filesystem::current_path();
-  std::string script_path = "main.lua";
+  std::string script_path;
 };
 
 std::filesystem::path NormalizeRoot(const std::filesystem::path &path) {
@@ -37,15 +37,16 @@ int main(int argc, char **argv) {
 
   std::string root_arg = ".";
   std::string script_arg;
+  std::string game_id;
 
+  app.add_option("-r,--root", root_arg,
+         "Game directory or .luna archive")
+      ->check(CLI::ExistingPath);
   app.add_option(
-         "-r,--root", root_arg,
-         "Root directory used for assets and Lua-relative file loading")
-      ->check(CLI::ExistingDirectory);
-  app.add_option(
-      "-s,--script", script_arg,
-      "Lua entry script path inside the asset VFS");
+      "-s,--script", script_arg, "Lua entry script path inside the asset VFS");
 
+  app.add_option("--game-id", game_id,
+      "Persistent storage identity (overrides game.json)");
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError &e) {
@@ -59,40 +60,20 @@ int main(int argc, char **argv) {
     options.script_path = script_arg;
   }
 
-  luna::Vfs root_vfs(options.root);
-  auto entry_info = root_vfs.assets().Stat(options.script_path);
-  if (!entry_info) {
-    const luna::asset::AssetError &error = entry_info.error();
-    const std::string resolved_entry =
-        error.path.empty() ? options.script_path : error.path;
-    return PrintErrorAndExit(
-        "script '" + resolved_entry + "' could not be loaded from root '" +
-        options.root.string() + "': " + error.message);
-  }
-  if (entry_info.value().kind != luna::asset::EntryKind::kFile) {
-    return PrintErrorAndExit(
-        "script '" + entry_info.value().path + "' is not a file");
-  }
-
-  std::error_code ec;
-  // Keep Lua's default relative path behavior aligned with the selected
-  // root instead of the shell's working directory.
-  std::filesystem::current_path(options.root, ec);
-  if (ec) {
-    return PrintErrorAndExit(
-        "failed to switch to root '" + options.root.string() + "': " +
-        ec.message());
-  }
-
   luna::log::Init();
 
-  luna::Engine e(options.root);
-  if (!e.Init()) {
-    luna::log::Shutdown();
-    return 1;
-  }
+  try {
+    luna::Engine e(options.root, game_id);
+    if (!e.Init()) {
+      luna::log::Shutdown();
+      return 1;
+    }
 
-  const int exit_code = e.Run(options.script_path) ? 0 : 1;
-  luna::log::Shutdown();
-  return exit_code;
+    const int exit_code = e.Run(options.script_path) ? 0 : 1;
+    luna::log::Shutdown();
+    return exit_code;
+  } catch (const std::exception &ex) {
+    luna::log::Shutdown();
+    return PrintErrorAndExit(ex.what());
+  }
 }

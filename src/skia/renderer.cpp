@@ -121,9 +121,8 @@ bool SkiaRenderer::Init() {
   }
 
   log::Info("renderer",
-      "window created logical={}x{} pixels={}x{} scale={:.2f}",
-      logical_width_, logical_height_, pixel_width_, pixel_height_,
-      pixel_viewport_.scale);
+      "window created logical={}x{} pixels={}x{} scale={:.2f}", logical_width_,
+      logical_height_, pixel_width_, pixel_height_, pixel_viewport_.scale);
 
   log::Info("renderer", "initialized window state; graphics init deferred");
   return true;
@@ -670,16 +669,16 @@ bool SkiaRenderer::BeginFrame(lua_State *L) {
 
   SkCanvas *sk = sk_recorder_->makeDeferredCanvas(
       MakeSurfaceImageInfo(static_cast<int>(surface_extent_.width),
-          static_cast<int>(surface_extent_.height), device_caps_.surface_format),
+          static_cast<int>(surface_extent_.height),
+          device_caps_.surface_format),
       skgpu::graphite::TextureInfos::MakeVulkan(texture_info_));
   if (!sk) {
     SetFatalError("failed to create deferred canvas");
     return false;
   }
   sk->setMatrix(window_to_surface_matrix_);
-  sk->clipRect(
-      SkRect::MakeWH(static_cast<SkScalar>(logical_width_),
-          static_cast<SkScalar>(logical_height_)),
+  sk->clipRect(SkRect::MakeWH(static_cast<SkScalar>(logical_width_),
+                   static_cast<SkScalar>(logical_height_)),
       SkClipOp::kIntersect, true);
 
   lua_rawgeti(L, LUA_REGISTRYINDEX, window_canvas_ref_);
@@ -966,40 +965,38 @@ void SkiaRenderer::RecreateSwapchain() {
       pixel_viewport_.scale);
 }
 
-std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadImageJob(asset::Vfs *vfs) {
-  return std::make_unique<LoadImageJob>(sk_recorder_.get(), vfs);
+std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadImageJob() {
+  return std::make_unique<LoadImageJob>(sk_recorder_.get());
 }
 
 void SkiaRenderer::LoadImageJob::Invoke(lua_State *L) {
-  const char *path = luaL_checkstring(L, 1);
-  if (!path || !*path) {
-    luaL_error(L, "load_image: path is empty");
-  }
-  path_ = path;
-  if (!vfs_) {
-    luaL_error(L, "load_image: Vfs is not available");
-  }
-  auto mapped = vfs_->MapFile(path_);
-  if (!mapped) {
-    luaL_error(L, "load_image: failed to open file: %s", path);
-  }
-  mapping_ = std::move(mapped).value();
-  file_ = SkMemoryStream::MakeDirect(mapping_.data(),
-      static_cast<size_t>(mapping_.size()));
+  input_ = AssetInput::Check(L, 2);
+  path_ = input_.path;
 }
 
 void SkiaRenderer::LoadImageJob::Run() {
+  status_ = input_.Map(&mapping_);
+  if (!status_)
+    return;
+  auto data = SkData::MakeWithProc(
+      mapping_.data(), mapping_.size(),
+      [](const void *, void *owner) {
+        delete static_cast<file::MappedFile *>(owner);
+      },
+      new file::MappedFile(mapping_));
+  file_ = std::make_unique<SkMemoryStream>(std::move(data));
   ZoneScopedN("LoadImage");
   std::unique_ptr<SkCodec> codec = SkCodec::MakeFromStream(std::move(file_));
   if (!codec) {
-    error_ = fmt::format("unrecognized image format: {}", path_);
+    DecodeError(path_, fmt::format("unrecognized image format: {}", path_));
     return;
   }
   SkCodec::Result result;
   std::tie(image_, result) = codec->getImage();
   if (result != SkCodec::kSuccess) {
-    error_ = fmt::format(
-        "failed to decode image: {}, {}", path_, fmt::underlying(result));
+    DecodeError(path_,
+        fmt::format(
+            "failed to decode image: {}, {}", path_, fmt::underlying(result)));
     return;
   }
 }
@@ -1007,6 +1004,10 @@ void SkiaRenderer::LoadImageJob::Run() {
 int SkiaRenderer::LoadImageJob::Finish(lua_State *L) {
   ZoneScopedN("FinishLoadImage");
   image_ = SkImages::TextureFromImage(recorder_, image_);
+  if (!image_) {
+    Fail("failed to upload decoded image");
+    return 0;
+  }
   auto *image = lua::New<Image>(L, std::move(image_));
 
   lua_pushnumber(L, image->sk->width());
@@ -1015,35 +1016,29 @@ int SkiaRenderer::LoadImageJob::Finish(lua_State *L) {
   return 3;
 }
 
-std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadFontfaceJob(asset::Vfs *vfs) {
-  return std::make_unique<LoadFontfaceJob>(font_mgr_, vfs);
+std::unique_ptr<AsyncJob> SkiaRenderer::MakeLoadFontfaceJob() {
+  return std::make_unique<LoadFontfaceJob>(font_mgr_);
 }
 
 void SkiaRenderer::LoadFontfaceJob::Invoke(lua_State *L) {
-  const char *path = luaL_checkstring(L, 1);
-
-  if (!path || !*path)
-    luaL_error(L, "register_font: path is empty");
-
-  path_ = path;
-  if (!vfs_) {
-    luaL_error(L, "register_font: Vfs is not available");
-  }
-  auto mapped = vfs_->MapFile(path_);
-  if (!mapped) {
-    luaL_error(L, "register_font: failed to open file: %s", path);
-  }
-  mapping_ = std::move(mapped).value();
+  input_ = AssetInput::Check(L, 2);
+  path_ = input_.path;
 }
 
 void SkiaRenderer::LoadFontfaceJob::Run() {
+  status_ = input_.Map(&mapping_);
+  if (!status_)
+    return;
   ZoneScopedN("LoadFontface");
   if (!font_mgr_ || !RegisterRuntimeFont(font_mgr_, std::move(mapping_))) {
-    error_ = fmt::format("failed to register font '{}'", path_);
+    DecodeError(path_, fmt::format("failed to register font '{}'", path_));
   }
 }
 
-int SkiaRenderer::LoadFontfaceJob::Finish(lua_State *L) { return 0; }
+int SkiaRenderer::LoadFontfaceJob::Finish(lua_State *L) {
+  lua_pushboolean(L, true);
+  return 1;
+}
 
 int SkiaRenderer::L_MakeCanvas(lua_State *L) {
   SkiaRenderer *r =

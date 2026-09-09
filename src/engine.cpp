@@ -56,8 +56,9 @@ Engine::PromiseState::~PromiseState() {
   result_refs.clear();
 }
 
-Engine::Engine(std::filesystem::path root)
-    : renderer_(MakeRendererBackend()), vfs_(std::move(root)) {}
+Engine::Engine(std::filesystem::path root, std::string game_id)
+    : renderer_(MakeRendererBackend()),
+      vfs_(root.string(), "", std::move(game_id)) {}
 
 bool Engine::Init() {
   log::Info("engine", "initializing");
@@ -85,6 +86,9 @@ bool Engine::Init() {
 
 Engine::~Engine() {
   factory_.Shutdown();
+  // Unclaimed jobs may own mixer/renderer resources. Release them while those
+  // subsystems (and Lua registry references) are still alive.
+  factory_.DrainCompletions().clear();
   pending_promises_.clear();
   timers_.clear();
 
@@ -111,6 +115,7 @@ bool Engine::InitLua() {
     return false;
   }
   luaL_openlibs(L_);
+  vfs_.BindSearcher(L_);
 
   lua_getfield(L_, LUA_REGISTRYINDEX, "_PRELOAD");
   lua::PushFunction(L_, [this](lua_State *L) {
@@ -159,41 +164,20 @@ void Engine::BindLua(lua_State *L) {
   lua_pushcclosure(L, &L_SetWindowSize, 1);
   lua_setfield(L, -2, "set_window_size");
 
-  lua_pushlightuserdata(L, this);
-  lua_pushcclosure(
-      L,
-      [](lua_State *L) {
-        Engine *e =
-            static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(
-            L, e, e->renderer_->MakeLoadImageJob(&e->vfs_.assets()));
-      },
-      1);
-  lua_setfield(L, -2, "load_image");
-
-  lua_pushlightuserdata(L, this);
-  lua_pushcclosure(
-      L,
-      [](lua_State *L) {
-        Engine *e =
-            static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(
-            L, e, e->renderer_->MakeLoadFontfaceJob(&e->vfs_.assets()));
-      },
-      1);
-  lua_setfield(L, -2, "load_fontface");
-
-  lua_pushlightuserdata(L, this);
-  lua_pushcclosure(
-      L,
-      [](lua_State *L) {
-        Engine *e =
-            static_cast<Engine *>(lua_touserdata(L, lua_upvalueindex(1)));
-        return L_StartAsyncJob(
-            L, e, e->mixer_.MakeLoadAudioJob(&e->vfs_.assets()));
-      },
-      1);
-  lua_setfield(L, -2, "load_audio");
+  lua_newtable(L);
+  lua::PushFunction(L, [this](lua_State *L) {
+    return L_StartAsyncJob(L, this, renderer_->MakeLoadImageJob());
+  });
+  lua_setfield(L, -2, "image");
+  lua::PushFunction(L, [this](lua_State *L) {
+    return L_StartAsyncJob(L, this, renderer_->MakeLoadFontfaceJob());
+  });
+  lua_setfield(L, -2, "font");
+  lua::PushFunction(L, [this](lua_State *L) {
+    return L_StartAsyncJob(L, this, mixer_.MakeLoadAudioJob());
+  });
+  lua_setfield(L, -2, "audio");
+  lua_setfield(L, -2, "assets");
 
 #if defined(TRACY_ENABLE)
   lua_newtable(L);
@@ -206,7 +190,20 @@ void Engine::BindLua(lua_State *L) {
 
   renderer_->BindLua(L);
   mixer_.BindLua(L);
-  vfs_.BindLua(L);
+  vfs_.BindLua(L, [this](lua_State *L, std::unique_ptr<AsyncJob> job) {
+    return L_StartAsyncJob(L, this, std::move(job));
+  });
+
+  // Lua owns the yield boundary; C functions must not yield across C++ frames.
+  static constexpr const char *await_source =
+      "local luna = ...; return function(future) "
+      "while not future:poll() do luna.wait(future:event()) end "
+      "return future:result() end";
+  if (luaL_loadstring(L, await_source) != 0)
+    lua_error(L);
+  lua_pushvalue(L, -2);
+  lua_call(L, 1, 1);
+  lua_setfield(L, -2, "await");
 }
 
 void Engine::BindLuaTypes(lua_State *L) {
@@ -219,8 +216,8 @@ void Engine::BindLuaTypes(lua_State *L) {
   if (lua::NewType<LPromise>(L)) {
     lua_pushcfunction(L, &Engine::L_PromisePoll);
     lua_setfield(L, -2, "poll");
-    lua_pushcfunction(L, &Engine::L_PromiseTake);
-    lua_setfield(L, -2, "take");
+    lua_pushcfunction(L, &Engine::L_PromiseResult);
+    lua_setfield(L, -2, "result");
     lua_pushcfunction(L, &Engine::L_PromiseEvent);
     lua_setfield(L, -2, "event");
   }
@@ -228,25 +225,23 @@ void Engine::BindLuaTypes(lua_State *L) {
 }
 
 bool Engine::CallLuaMain(std::string_view entry_path) {
-  auto mapped = vfs_.assets().MapFile(entry_path);
-  if (!mapped) {
-    const asset::AssetError &error = mapped.error();
+  file::MappedFile entry;
+  file::FileStatus status = vfs_.files().MapFile(entry_path, &entry);
+  if (!status) {
     const std::string resolved_entry =
-        error.path.empty() ? std::string(entry_path) : error.path;
+        status.path().empty() ? std::string(entry_path) : status.path();
     log::Error("engine", "failed to load Lua entry '{}' from VFS: {}",
-        resolved_entry, error.message);
+        resolved_entry, status.message());
     return false;
   }
 
-  const asset::MappedAsset &entry = mapped.value();
   const std::string resolved_entry = entry.info().path;
   const std::string chunk_name = "@" + resolved_entry;
   const char *chunk_data =
       entry.empty() ? "" : reinterpret_cast<const char *>(entry.data());
 
   log::Info("engine", "loading Lua entry '{}' from VFS", resolved_entry);
-  if (luaL_loadbuffer(
-          L_, chunk_data, static_cast<size_t>(entry.size()),
+  if (luaL_loadbuffer(L_, chunk_data, static_cast<size_t>(entry.size()),
           chunk_name.c_str()) != 0) {
     log::Error("engine", "Lua error while loading '{}': {}", resolved_entry,
         lua_tostring(L_, -1));
@@ -264,6 +259,8 @@ bool Engine::CallLuaMain(std::string_view entry_path) {
 }
 
 bool Engine::Run(std::string_view entry_path) {
+  if (entry_path.empty())
+    entry_path = vfs_.Entry();
   if (!CallLuaMain(entry_path)) {
     return false;
   }
@@ -319,7 +316,7 @@ bool Engine::Run(std::string_view entry_path) {
   }
 
   log::Info("engine", "main loop exited");
-  return !renderer_->HasFatalError();
+  return !script_failed_ && !renderer_->HasFatalError();
 }
 
 void Engine::DrainPromiseCompletions() {
@@ -332,17 +329,36 @@ void Engine::DrainPromiseCompletions() {
     std::shared_ptr<PromiseState> promise = std::move(it->second);
     pending_promises_.erase(it);
 
+    // Publish once on the main Lua state, before signaling waiters. Resource
+    // finalization and releasing stream busy flags are part of settlement.
+    const int top = lua_gettop(L_);
+    if (!job->Rejected()) {
+      try {
+        const int produced = job->Finish(L_);
+        if (!job->Rejected()) {
+          const int first = lua_gettop(L_) - produced + 1;
+          for (int i = 0; i < produced; ++i) {
+            lua_pushvalue(L_, first + i);
+            promise->result_refs.push_back(luaL_ref(L_, LUA_REGISTRYINDEX));
+          }
+        }
+      } catch (const std::exception &ex) {
+        job->Fail(ex.what());
+      }
+    }
+    lua_settop(L_, top);
+
     if (job->Rejected()) {
       promise->settlement = PromiseState::Settlement::REJECTED;
       promise->error = job->GetError();
-      log::Warn(
-          "engine", "async job {} rejected: {}", promise_id, promise->error);
+      log::Warn("engine", "async job {} rejected: {}", promise_id,
+          promise->error.message());
     } else {
       promise->settlement = PromiseState::Settlement::FULFILLED;
-      promise->completed_job = std::move(job);
       log::Debug("engine", "async job {} completed", promise_id);
     }
 
+    job.reset();
     SignalEvent(promise->event);
   }
 }
@@ -403,6 +419,7 @@ void Engine::Tick() {
         std::scoped_lock<std::mutex> lock(sched_mutex_);
         RemoveTask(t);
       }
+      script_failed_ = true;
       alive_task_count_ = 0;
       break;
     }
@@ -542,14 +559,11 @@ void Engine::SignalEvent(const std::shared_ptr<EventState> &event) {
   if (!event)
     return;
   std::scoped_lock<std::mutex> lock(sched_mutex_);
-  WaitLink *link = event->waiters_head;
-  while (link) {
-    WaitLink *next = link->next_task;
+  while (WaitLink *link = event->waiters_head) {
     Task *t = link->task;
     t->wait.ready_index = link->index;
     UnlinkAllEvents(t);
     tasks_.push_back(t);
-    link = next;
   }
 }
 
@@ -724,22 +738,19 @@ int Engine::L_PromisePoll(lua_State *L) {
   return 2;
 }
 
-int Engine::L_PromiseTake(lua_State *L) {
-  LPromise *promise_ud = lua::Check<LPromise>(L, 1);
-  std::shared_ptr<PromiseState> &promise = promise_ud->state;
-
-  if (promise->settlement == PromiseState::Settlement::PENDING) {
-    return luaL_error(L, "promise.take: promise is not settled");
-  }
+int Engine::L_PromiseResult(lua_State *L) {
+  auto &promise = lua::Check<LPromise>(L, 1)->state;
+  if (promise->settlement == PromiseState::Settlement::PENDING)
+    return luaL_error(L, "future.result: future is not settled");
 
   if (promise->settlement == PromiseState::Settlement::REJECTED) {
-    return luaL_error(L, "promise rejected: %s", promise->error.c_str());
+    lua_pushnil(L);
+    PushFileError(L, promise->error);
+    return 2;
   }
-
-  int produced = promise->completed_job->Finish(L);
-  promise->completed_job.reset();
-
-  return produced;
+  for (int ref : promise->result_refs)
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+  return static_cast<int>(promise->result_refs.size());
 }
 
 int Engine::L_PromiseEvent(lua_State *L) {

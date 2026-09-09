@@ -1,6 +1,8 @@
 #ifndef LUNA_SKIA_RENDERER_H
 #define LUNA_SKIA_RENDERER_H
 
+#include "vfs.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
@@ -21,8 +23,8 @@
 #include <skia/gpu/graphite/Context.h>
 #include <skia/gpu/graphite/vk/VulkanGraphiteTypes.h>
 
-#include "asset_vfs.h"
 #include "factory.h"
+#include "file_vfs.h"
 #include "renderer_interface.h"
 
 struct lua_State;
@@ -39,8 +41,8 @@ private:
 
   class LoadImageJob : public AsyncJob {
   public:
-    LoadImageJob(skgpu::graphite::Recorder *recorder, asset::Vfs *vfs)
-        : recorder_(recorder), vfs_(vfs) {}
+    explicit LoadImageJob(skgpu::graphite::Recorder *recorder)
+        : recorder_(recorder) {}
     void Invoke(lua_State *L) override;
     void Run() override;
     int Finish(lua_State *L) override;
@@ -48,26 +50,26 @@ private:
 
   private:
     skgpu::graphite::Recorder *recorder_;
-    asset::Vfs *vfs_ = nullptr;
+    AssetInput input_;
     std::string path_;
-    asset::MappedAsset mapping_;
+    file::MappedFile mapping_;
     std::unique_ptr<SkStreamAsset> file_;
     sk_sp<SkImage> image_;
   };
 
   class LoadFontfaceJob : public AsyncJob {
   public:
-    LoadFontfaceJob(sk_sp<SkFontMgr> font_mgr, asset::Vfs *vfs)
-        : font_mgr_(std::move(font_mgr)), vfs_(vfs) {}
+    explicit LoadFontfaceJob(sk_sp<SkFontMgr> font_mgr)
+        : font_mgr_(std::move(font_mgr)) {}
     void Invoke(lua_State *L) override;
     void Run() override;
     int Finish(lua_State *L) override;
 
   private:
     sk_sp<SkFontMgr> font_mgr_;
-    asset::Vfs *vfs_ = nullptr;
+    AssetInput input_;
     std::string path_;
-    asset::MappedAsset mapping_;
+    file::MappedFile mapping_;
   };
 
   void InitVulkan();
@@ -84,9 +86,9 @@ private:
   void RecreateSwapchain();
   void SetFatalError(std::string message);
   bool SubmitTracyCollect(vk::CommandBuffer command_buffer);
-  bool SubmitTracyTimestamp(
-      vk::CommandBuffer command_buffer, vk::Semaphore wait_semaphore,
-      vk::Semaphore signal_semaphore, uint16_t query_id);
+  bool SubmitTracyTimestamp(vk::CommandBuffer command_buffer,
+      vk::Semaphore wait_semaphore, vk::Semaphore signal_semaphore,
+      uint16_t query_id);
 
   static int L_MakeCanvas(lua_State *L);
 
@@ -152,8 +154,8 @@ public:
     return fatal_error_message_;
   }
 
-  std::unique_ptr<AsyncJob> MakeLoadImageJob(asset::Vfs *vfs) override;
-  std::unique_ptr<AsyncJob> MakeLoadFontfaceJob(asset::Vfs *vfs) override;
+  std::unique_ptr<AsyncJob> MakeLoadImageJob() override;
+  std::unique_ptr<AsyncJob> MakeLoadFontfaceJob() override;
 };
 
 } // namespace luna::backend::skia

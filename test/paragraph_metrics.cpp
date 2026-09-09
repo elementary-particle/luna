@@ -52,18 +52,18 @@ std::vector<uint8_t> ReadFileBytes(const std::filesystem::path &path) {
   return bytes;
 }
 
-luna::asset::MappedAsset MakeMappedFont(
+luna::file::MappedFile MakeMappedFont(
     const std::vector<uint8_t> &font_bytes) {
   std::vector<std::byte> bytes(font_bytes.size());
   if (!bytes.empty()) {
     std::memcpy(bytes.data(), font_bytes.data(), bytes.size());
   }
 
-  luna::asset::AssetInfo info;
+  luna::file::FileInfo info;
   info.path = "test/assets/ABeeZee-Regular.ttf";
-  info.kind = luna::asset::EntryKind::kFile;
+  info.kind = luna::file::FileKind::kFile;
   info.size = static_cast<uint64_t>(bytes.size());
-  return luna::asset::MappedAsset::FromOwnedBuffer(std::move(bytes), info);
+  return luna::file::MappedFile::FromOwnedBuffer(std::move(bytes), info);
 }
 
 void CheckMetrics(const luna::backend::ParagraphMetrics &metrics,

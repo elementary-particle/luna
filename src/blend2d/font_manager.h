@@ -3,13 +3,12 @@
 
 #include <blend2d/blend2d.h>
 
-#include "asset_vfs.h"
+#include "file_vfs.h"
 
 namespace luna::backend::blend2d {
 
 BLFontManager MakeRuntimeFontManager();
-bool RegisterRuntimeFont(BLFontManager *font_mgr, const char path[]);
-bool RegisterRuntimeFont(BLFontManager *font_mgr, asset::MappedAsset mapping);
+bool RegisterRuntimeFont(BLFontManager *font_mgr, file::MappedFile mapping);
 
 } // namespace luna::backend::blend2d
 

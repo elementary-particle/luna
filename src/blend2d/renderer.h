@@ -1,6 +1,8 @@
 #ifndef LUNA_BLEND2D_RENDERER_H
 #define LUNA_BLEND2D_RENDERER_H
 
+#include "vfs.h"
+
 #include <SDL3/SDL.h>
 
 #include <memory>
@@ -8,9 +10,9 @@
 
 #include <blend2d/blend2d.h>
 
-#include "asset_vfs.h"
 #include "blend2d/canvas.h"
 #include "factory.h"
+#include "file_vfs.h"
 #include "renderer_interface.h"
 
 struct lua_State;
@@ -21,31 +23,31 @@ class Blend2dRenderer final : public Renderer {
 private:
   class LoadImageJob : public AsyncJob {
   public:
-    explicit LoadImageJob(asset::Vfs *vfs) : vfs_(vfs) {}
+    LoadImageJob() = default;
     void Invoke(lua_State *L) override;
     void Run() override;
     int Finish(lua_State *L) override;
 
   private:
-    asset::Vfs *vfs_ = nullptr;
+    AssetInput input_;
     std::string path_;
-    asset::MappedAsset mapping_;
+    file::MappedFile mapping_;
     Image image_;
   };
 
   class LoadFontfaceJob : public AsyncJob {
   public:
-    LoadFontfaceJob(BLFontManager font_mgr, asset::Vfs *vfs)
-        : font_mgr_(std::move(font_mgr)), vfs_(vfs) {}
+    explicit LoadFontfaceJob(BLFontManager font_mgr)
+        : font_mgr_(std::move(font_mgr)) {}
     void Invoke(lua_State *L) override;
     void Run() override;
     int Finish(lua_State *L) override;
 
   private:
     BLFontManager font_mgr_;
-    asset::Vfs *vfs_ = nullptr;
+    AssetInput input_;
     std::string path_;
-    asset::MappedAsset mapping_;
+    file::MappedFile mapping_;
   };
 
   void CreatePresentationResources();
@@ -93,8 +95,8 @@ public:
     return fatal_error_message_;
   }
 
-  std::unique_ptr<AsyncJob> MakeLoadImageJob(asset::Vfs *vfs) override;
-  std::unique_ptr<AsyncJob> MakeLoadFontfaceJob(asset::Vfs *vfs) override;
+  std::unique_ptr<AsyncJob> MakeLoadImageJob() override;
+  std::unique_ptr<AsyncJob> MakeLoadFontfaceJob() override;
 };
 
 } // namespace luna::backend::blend2d

@@ -1,12 +1,12 @@
 #ifndef LUNA_FACTORY_H
 #define LUNA_FACTORY_H
 
+#include "file_vfs.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <memory>
-#include <optional>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -21,15 +21,23 @@ using PromiseId = uint64_t;
 
 class AsyncJob {
 protected:
-  std::optional<std::string> error_;
+  file::FileStatus status_;
+  void DecodeError(std::string path, std::string message) {
+    status_ = file::FileStatus::Error(file::FileStatusCode::kFormatError,
+        "decode", std::move(path), std::move(message));
+  }
 
 public:
   virtual ~AsyncJob() = default;
   virtual void Invoke(lua_State *L) = 0;
   virtual void Run() = 0;
   virtual int Finish(lua_State *L) = 0;
-  std::string &&GetError() { return std::move(*error_); }
-  bool Rejected() const { return error_.has_value(); }
+  const file::FileStatus &GetError() const { return status_; }
+  bool Rejected() const { return !status_; }
+  void Fail(std::string message) {
+    status_ = file::FileStatus::Error(
+        file::FileStatusCode::kIoError, "job", "", std::move(message));
+  }
 };
 
 using CompletedJob = std::pair<PromiseId, std::unique_ptr<AsyncJob>>;
@@ -44,8 +52,8 @@ public:
   std::vector<CompletedJob> Drain() {
     std::vector<CompletedJob> out;
     std::lock_guard<std::mutex> lock(mu_);
-    out.assign(std::make_move_iterator(q_.begin()),
-               std::make_move_iterator(q_.end()));
+    out.assign(
+        std::make_move_iterator(q_.begin()), std::make_move_iterator(q_.end()));
     q_.clear();
     return out;
   }

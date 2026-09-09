@@ -64,16 +64,21 @@ void Factory::WorkerMain(std::stop_token stop_token, int i) {
 
     {
       std::unique_lock<std::mutex> lock(jobs_mu_);
-      jobs_cv_.wait(lock, [&]() {
-        return !jobs_.empty() || stop_token.stop_requested();
-      });
+      jobs_cv_.wait(lock,
+          [&]() { return !jobs_.empty() || stop_token.stop_requested(); });
       if (jobs_.empty()) {
         return;
       }
       job = std::move(jobs_.front());
       jobs_.pop_front();
     }
-    job.second->Run();
+    try {
+      job.second->Run();
+    } catch (const std::exception &ex) {
+      job.second->Fail(ex.what());
+    } catch (...) {
+      job.second->Fail("unexpected worker exception");
+    }
 
     completion_queue_.Push(std::move(job));
   }
