@@ -1,4 +1,6 @@
 #include "blend2d/canvas.h"
+#include "backend/svg_path.h"
+#include <numbers>
 
 namespace luna::backend::blend2d {
 
@@ -26,15 +28,16 @@ void Path::SmoothCubicTo(double x2, double y2, double x3, double y3) {
 void Path::ArcTo(double rx, double ry, double x_axis_rotation,
     bool large_arc_flag, bool sweep_flag, double x1, double y1) {
   bl.elliptic_arc_to(
-      rx, ry, x_axis_rotation, large_arc_flag, sweep_flag, x1, y1);
+      rx, ry, x_axis_rotation * (std::numbers::pi / 180.0), large_arc_flag, sweep_flag, x1, y1);
 }
 
 void Path::Close() { bl.close(); }
 
 void Path::Reset() { bl.reset(); }
 
-std::optional<Path> Path::FromSvgString(const char * /*svg*/) {
-  return std::nullopt;
+std::optional<Path> Path::FromSvgString(const char *svg) {
+  if (!svg) return std::nullopt;
+  return ParseSvgPath<Path>(svg);
 }
 
 std::string Path::ToSvgString(bool /*relative*/) const { return {}; }

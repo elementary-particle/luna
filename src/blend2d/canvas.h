@@ -262,7 +262,7 @@ struct Backend {
   static int DefaultFontWeight();
   static int DefaultFontWidth();
   static int DefaultFontSlant();
-  static constexpr bool SupportsSvgPathParsing() { return false; }
+  static constexpr bool SupportsSvgPathParsing() { return true; }
   static constexpr bool SupportsSvgPathSerialization() { return false; }
   static void SetEnums(lua_State *L);
 };
