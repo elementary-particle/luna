@@ -1,0 +1,68 @@
+name: windows
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  LUNA_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.cache/vcpkg/archives
+  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.cache/vcpkg/archives,readwrite
+
+jobs:
+  build-windows:
+    runs-on: windows-2025-vs2026
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+          vsversion: "18.0"
+
+      - name: Set up vcpkg
+        shell: bash
+        run: git clone https://github.com/microsoft/vcpkg.git "${LUNA_VCPKG_ROOT}"
+
+      - name: Create vcpkg cache directories
+        shell: bash
+        run: mkdir -p "${VCPKG_DEFAULT_BINARY_CACHE}" "${LUNA_VCPKG_ROOT}/downloads"
+
+      - name: Bootstrap vcpkg
+        run: |
+          $env:VCPKG_ROOT = $env:LUNA_VCPKG_ROOT
+          & "$env:LUNA_VCPKG_ROOT\bootstrap-vcpkg.bat"
+
+      - name: Cache vcpkg state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+            ${{ env.LUNA_VCPKG_ROOT }}/downloads
+            ${{ github.workspace }}/build/vcpkg_installed
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**', 'vcpkg-triplets/**') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-
+
+      - name: Configure
+        run: |
+          $env:VCPKG_ROOT = $env:LUNA_VCPKG_ROOT
+          cmake --preset vcpkg-x64-windows -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: luna-windows
+          path: build/luna.exe
